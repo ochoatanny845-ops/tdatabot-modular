@@ -2461,3 +2461,406 @@ class Forget2FAManager:
 # ================================
 
 
+
+
+# ===== Handler Methods from EnhancedBot =====
+
+    def handle_change_2fa(self, query):
+    """处理修改2FA"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    # 检查权限
+    is_member, level, _ = self.db.check_membership(user_id)
+    if not is_member and not self.db.is_admin(user_id):
+        self.safe_edit_message(query, "❌ 需要会员权限才能使用2FA修改功能")
+        return
+    
+    if not TELETHON_AVAILABLE:
+        self.safe_edit_message(query, "❌ 2FA修改功能不可用\n\n原因: Telethon库未安装")
+        return
+    
+    text = f"""
+
+    def handle_forget_2fa(self, query):
+    """处理忘记2FA"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    # 检查权限
+    is_member, level, _ = self.db.check_membership(user_id)
+    if not is_member and not self.db.is_admin(user_id):
+        self.safe_edit_message(query, "❌ 需要会员权限才能使用忘记2FA功能")
+        return
+    
+    if not TELETHON_AVAILABLE:
+        self.safe_edit_message(query, "❌ 忘记2FA功能不可用\n\n原因: Telethon库未安装")
+        return
+    
+    # 检查代理是否可用
+    proxy_count = len(self.proxy_manager.proxies)
+    proxy_warning = ""
+    if proxy_count < 3:
+        proxy_warning = f"\n⚠️ <b>{t(user_id, 'forget_2fa_proxy_warning').format(count=proxy_count)}</b>\n"
+    
+    # 构建代理模式状态文本
+    proxy_mode_text = t(user_id, 'forget_2fa_proxy_mode_enabled') if self.proxy_manager.is_proxy_mode_active(self.db) else t(user_id, 'forget_2fa_proxy_mode_disabled')
+    
+    text = f"""
+
+    def handle_add_2fa(self, query):
+    """处理添加2FA功能"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    # 检查权限
+    is_member, level, _ = self.db.check_membership(user_id)
+    if not is_member and not self.db.is_admin(user_id):
+        self.safe_edit_message(query, t(user_id, 'add_2fa_need_member'))
+        return
+    
+    text = f"""
+
+    def handle_remove_2fa(self, query):
+    """处理删除2FA入口"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    # 检查权限
+    is_member, level, _ = self.db.check_membership(user_id)
+    if not is_member and not self.db.is_admin(user_id):
+        self.safe_edit_message(query, "❌ 需要会员权限才能使用删除2FA功能")
+        return
+    
+    if not TELETHON_AVAILABLE:
+        self.safe_edit_message(query, "❌ 删除2FA功能不可用\n\n原因: Telethon库未安装")
+        return
+    
+    text = f"""
+
+    def handle_add_2fa_input(self, update: Update, context: CallbackContext, user_id: int, text: str):
+    """处理添加2FA密码输入"""
+    if user_id not in self.pending_add_2fa_tasks:
+        self.safe_send_message(update, t(user_id, 'add_2fa_no_pending_task'))
+        return
+    
+    task = self.pending_add_2fa_tasks[user_id]
+    
+    # 检查超时（5分钟）
+    if time.time() - task['start_time'] > 300:
+        del self.pending_add_2fa_tasks[user_id]
+        self.db.save_user(user_id, "", "", "")
+        self.safe_send_message(update, t(user_id, 'add_2fa_operation_timeout'))
+        return
+    
+    # 验证密码
+    two_fa_password = text.strip()
+    
+    if not two_fa_password:
+        self.safe_send_message(update, t(user_id, 'add_2fa_password_empty'))
+        return
+    
+    # 确认接收密码
+    self.safe_send_message(
+        update,
+        f"<b>{t(user_id, 'add_2fa_password_received')}</b>\n\n"
+        f"{t(user_id, 'add_2fa_password_display').format(password=two_fa_password)}\n\n"
+        f"{t(user_id, 'add_2fa_processing_now')}",
+        'HTML'
+    )
+    
+    # 异步处理添加2FA
+    def process_add_2fa():
+        asyncio.run(self.complete_add_2fa(update, context, user_id, two_fa_password))
+    
+    thread = threading.Thread(target=process_add_2fa, daemon=True)
+    thread.start()
+
+
+async def process_forget_2fa(self, update, context, document):
+    """忘记2FA处理 - 批量请求密码重置"""
+    user_id = update.effective_user.id
+    start_time = time.time()
+    task_id = f"{user_id}_{int(start_time)}"
+    batch_id = f"forget2fa_{task_id}"
+    
+    progress_msg = self.safe_send_message(update, f"<b>{t(user_id, 'forget_2fa_processing_file')}</b>", 'HTML')
+    if not progress_msg:
+        return
+    
+    temp_zip = None
+    try:
+        temp_dir = tempfile.mkdtemp(prefix="temp_forget2fa_")
+        temp_zip = os.path.join(temp_dir, document.file_name)
+        document.get_file().download(temp_zip)
+        
+        # 使用FileProcessor扫描
+        files, extract_dir, file_type = self.processor.scan_zip_file(temp_zip, user_id, task_id)
+        
+        if not files:
+            try:
+                progress_msg.edit_text(
+                    f"<b>{t(user_id, 'forget_2fa_no_valid_files')}</b>\n\n{t(user_id, 'forget_2fa_ensure_format')}",
+                    parse_mode='HTML'
+                )
+            except:
+                pass
+            return
+        
+        total_files = len(files)
+        proxy_count = len(self.proxy_manager.proxies)
+        
+        try:
+            progress_msg.edit_text(
+                f"<b>{t(user_id, 'forget_2fa_processing')}</b>\n\n"
+                f"{t(user_id, 'forget_2fa_found_accounts').format(count=total_files)}\n"
+                f"{t(user_id, 'forget_2fa_format').format(format=file_type.upper())}\n"
+                f"{t(user_id, 'forget_2fa_proxy_count').format(count=proxy_count)}\n\n"
+                f"{t(user_id, 'forget_2fa_initializing')}",
+                parse_mode='HTML'
+            )
+        except:
+            pass
+        
+        # 创建Forget2FAManager实例
+        forget_manager = Forget2FAManager(self.proxy_manager, self.db)
+        
+        # 进度回调函数
+        last_update_time = [time.time()]
+        
+        async def progress_callback(processed, total, results, speed, elapsed, current_result):
+            # 限制更新频率（每3秒最多更新一次）
+            current_time = time.time()
+            if current_time - last_update_time[0] < 3 and processed < total:
+                return
+            last_update_time[0] = current_time
+            
+            # 格式化时间 - 使用翻译
+            minutes = int(elapsed) // 60
+            seconds = int(elapsed) % 60
+            if minutes > 0:
+                time_str = f"{minutes}{t(user_id, 'minutes_unit')}{seconds}{t(user_id, 'seconds_unit')}"
+            else:
+                time_str = f"{seconds}{t(user_id, 'seconds_unit')}"
+            
+            # 统计各状态数量
+            requested = len(results.get('requested', []))
+            no_2fa = len(results.get('no_2fa', []))
+            cooling = len(results.get('cooling', []))
+            failed = len(results.get('failed', []))
+            pending = total - processed
+            
+            # 当前处理状态
+            current_name = current_result.get('account_name', '')
+            current_status = current_result.get('status', '')
+            # 隐藏代理详细信息，保护用户隐私
+            current_proxy_raw = current_result.get('proxy_used', t(user_id, 'forget_2fa_status_local'))
+            current_proxy = Forget2FAManager.mask_proxy_for_display(current_proxy_raw, user_id)
+            
+            # 状态映射 - 使用翻译
+            status_map = {
+                'requested': t(user_id, 'forget_2fa_status_reset'),
+                'no_2fa': t(user_id, 'forget_2fa_status_no_reset'),
+                'cooling': t(user_id, 'forget_2fa_status_cooling'),
+                'failed': t(user_id, 'forget_2fa_status_failed')
+            }
+            status_emoji = status_map.get(current_status, t(user_id, 'status_processing'))
+            
+            # 计算百分比
+            percent = processed * 100 // total if total > 0 else 0
+            
+            progress_text = f"""
+
+
+
+# ===== Handler Methods =====
+
+    def handle_change_2fa(self, query):
+    """处理修改2FA"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    # 检查权限
+    is_member, level, _ = self.db.check_membership(user_id)
+    if not is_member and not self.db.is_admin(user_id):
+        self.safe_edit_message(query, "❌ 需要会员权限才能使用2FA修改功能")
+        return
+    
+    if not TELETHON_AVAILABLE:
+        self.safe_edit_message(query, "❌ 2FA修改功能不可用\n\n原因: Telethon库未安装")
+        return
+    
+    text = f"""
+
+    def handle_forget_2fa(self, query):
+    """处理忘记2FA"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    # 检查权限
+    is_member, level, _ = self.db.check_membership(user_id)
+    if not is_member and not self.db.is_admin(user_id):
+        self.safe_edit_message(query, "❌ 需要会员权限才能使用忘记2FA功能")
+        return
+    
+    if not TELETHON_AVAILABLE:
+        self.safe_edit_message(query, "❌ 忘记2FA功能不可用\n\n原因: Telethon库未安装")
+        return
+    
+    # 检查代理是否可用
+    proxy_count = len(self.proxy_manager.proxies)
+    proxy_warning = ""
+    if proxy_count < 3:
+        proxy_warning = f"\n⚠️ <b>{t(user_id, 'forget_2fa_proxy_warning').format(count=proxy_count)}</b>\n"
+    
+    # 构建代理模式状态文本
+    proxy_mode_text = t(user_id, 'forget_2fa_proxy_mode_enabled') if self.proxy_manager.is_proxy_mode_active(self.db) else t(user_id, 'forget_2fa_proxy_mode_disabled')
+    
+    text = f"""
+
+    def handle_add_2fa(self, query):
+    """处理添加2FA功能"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    # 检查权限
+    is_member, level, _ = self.db.check_membership(user_id)
+    if not is_member and not self.db.is_admin(user_id):
+        self.safe_edit_message(query, t(user_id, 'add_2fa_need_member'))
+        return
+    
+    text = f"""
+
+    def handle_add_2fa_input(self, update: Update, context: CallbackContext, user_id: int, text: str):
+    """处理添加2FA密码输入"""
+    if user_id not in self.pending_add_2fa_tasks:
+        self.safe_send_message(update, t(user_id, 'add_2fa_no_pending_task'))
+        return
+    
+    task = self.pending_add_2fa_tasks[user_id]
+    
+    # 检查超时（5分钟）
+    if time.time() - task['start_time'] > 300:
+        del self.pending_add_2fa_tasks[user_id]
+        self.db.save_user(user_id, "", "", "")
+        self.safe_send_message(update, t(user_id, 'add_2fa_operation_timeout'))
+        return
+    
+    # 验证密码
+    two_fa_password = text.strip()
+    
+    if not two_fa_password:
+        self.safe_send_message(update, t(user_id, 'add_2fa_password_empty'))
+        return
+    
+    # 确认接收密码
+    self.safe_send_message(
+        update,
+        f"<b>{t(user_id, 'add_2fa_password_received')}</b>\n\n"
+        f"{t(user_id, 'add_2fa_password_display').format(password=two_fa_password)}\n\n"
+        f"{t(user_id, 'add_2fa_processing_now')}",
+        'HTML'
+    )
+    
+    # 异步处理添加2FA
+    def process_add_2fa():
+        asyncio.run(self.complete_add_2fa(update, context, user_id, two_fa_password))
+    
+    thread = threading.Thread(target=process_add_2fa, daemon=True)
+    thread.start()
+
+
+async def process_forget_2fa(self, update, context, document):
+    """忘记2FA处理 - 批量请求密码重置"""
+    user_id = update.effective_user.id
+    start_time = time.time()
+    task_id = f"{user_id}_{int(start_time)}"
+    batch_id = f"forget2fa_{task_id}"
+    
+    progress_msg = self.safe_send_message(update, f"<b>{t(user_id, 'forget_2fa_processing_file')}</b>", 'HTML')
+    if not progress_msg:
+        return
+    
+    temp_zip = None
+    try:
+        temp_dir = tempfile.mkdtemp(prefix="temp_forget2fa_")
+        temp_zip = os.path.join(temp_dir, document.file_name)
+        document.get_file().download(temp_zip)
+        
+        # 使用FileProcessor扫描
+        files, extract_dir, file_type = self.processor.scan_zip_file(temp_zip, user_id, task_id)
+        
+        if not files:
+            try:
+                progress_msg.edit_text(
+                    f"<b>{t(user_id, 'forget_2fa_no_valid_files')}</b>\n\n{t(user_id, 'forget_2fa_ensure_format')}",
+                    parse_mode='HTML'
+                )
+            except:
+                pass
+            return
+        
+        total_files = len(files)
+        proxy_count = len(self.proxy_manager.proxies)
+        
+        try:
+            progress_msg.edit_text(
+                f"<b>{t(user_id, 'forget_2fa_processing')}</b>\n\n"
+                f"{t(user_id, 'forget_2fa_found_accounts').format(count=total_files)}\n"
+                f"{t(user_id, 'forget_2fa_format').format(format=file_type.upper())}\n"
+                f"{t(user_id, 'forget_2fa_proxy_count').format(count=proxy_count)}\n\n"
+                f"{t(user_id, 'forget_2fa_initializing')}",
+                parse_mode='HTML'
+            )
+        except:
+            pass
+        
+        # 创建Forget2FAManager实例
+        forget_manager = Forget2FAManager(self.proxy_manager, self.db)
+        
+        # 进度回调函数
+        last_update_time = [time.time()]
+        
+        async def progress_callback(processed, total, results, speed, elapsed, current_result):
+            # 限制更新频率（每3秒最多更新一次）
+            current_time = time.time()
+            if current_time - last_update_time[0] < 3 and processed < total:
+                return
+            last_update_time[0] = current_time
+            
+            # 格式化时间 - 使用翻译
+            minutes = int(elapsed) // 60
+            seconds = int(elapsed) % 60
+            if minutes > 0:
+                time_str = f"{minutes}{t(user_id, 'minutes_unit')}{seconds}{t(user_id, 'seconds_unit')}"
+            else:
+                time_str = f"{seconds}{t(user_id, 'seconds_unit')}"
+            
+            # 统计各状态数量
+            requested = len(results.get('requested', []))
+            no_2fa = len(results.get('no_2fa', []))
+            cooling = len(results.get('cooling', []))
+            failed = len(results.get('failed', []))
+            pending = total - processed
+            
+            # 当前处理状态
+            current_name = current_result.get('account_name', '')
+            current_status = current_result.get('status', '')
+            # 隐藏代理详细信息，保护用户隐私
+            current_proxy_raw = current_result.get('proxy_used', t(user_id, 'forget_2fa_status_local'))
+            current_proxy = Forget2FAManager.mask_proxy_for_display(current_proxy_raw, user_id)
+            
+            # 状态映射 - 使用翻译
+            status_map = {
+                'requested': t(user_id, 'forget_2fa_status_reset'),
+                'no_2fa': t(user_id, 'forget_2fa_status_no_reset'),
+                'cooling': t(user_id, 'forget_2fa_status_cooling'),
+                'failed': t(user_id, 'forget_2fa_status_failed')
+            }
+            status_emoji = status_map.get(current_status, t(user_id, 'status_processing'))
+            
+            # 计算百分比
+            percent = processed * 100 // total if total > 0 else 0
+            
+            progress_text = f"""
+

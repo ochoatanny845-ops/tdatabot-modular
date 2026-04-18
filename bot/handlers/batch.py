@@ -1205,3 +1205,761 @@ async def safe_convert_tdata(tdata_path, phone_for_log=None):
 # ================================
 
 
+
+
+# ===== Handler Methods from EnhancedBot =====
+
+    def handle_batch_create_start(self, query):
+    """处理批量创建开始"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    # 检查功能是否启用
+    if not config.ENABLE_BATCH_CREATE or self.batch_creator is None:
+        self.safe_edit_message(query, t(user_id, 'batch_create_feature_disabled'))
+        return
+    
+    # 检查会员权限
+    is_member, level, expiry = self.db.check_membership(user_id)
+    if not is_member and not self.db.is_admin(user_id):
+        self.safe_edit_message(
+            query,
+            "⚠️ 批量创建功能需要会员权限\n\n请先开通会员",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("💳 开通会员", callback_data="vip_menu"),
+                InlineKeyboardButton(t(user_id, 'btn_back'), callback_data="back_to_main")
+            ]])
+        )
+        return
+    
+    text = f"""
+
+    def handle_batch_create_callbacks(self, update: Update, context: CallbackContext, query, data: str):
+    """处理批量创建回调"""
+    user_id = query.from_user.id
+    
+    if data == "batch_create_noop":
+        # 这是进度按钮的空操作回调
+        query.answer("实时进度更新中...")
+        return
+    elif data == "batch_create_type_group":
+        self.handle_batch_create_select_type(query, user_id, "group")
+    elif data == "batch_create_type_channel":
+        self.handle_batch_create_select_type(query, user_id, "channel")
+    elif data == "batch_create_skip_admin":
+        query.answer()
+        if user_id in self.pending_batch_create:
+            self.pending_batch_create[user_id]['admin_username'] = ""
+            fake_update = self._create_fake_update(user_id)
+            self._ask_for_group_names(fake_update, user_id)
+    elif data == "batch_create_username_custom":
+        query.answer()
+        if user_id in self.pending_batch_create:
+            self.pending_batch_create[user_id]['username_mode'] = 'custom'
+            text = f"""
+
+    def handle_batch_create_select_type(self, query, user_id: int, creation_type: str):
+    """选择创建类型"""
+    query.answer()
+    
+    if user_id not in self.pending_batch_create:
+        self.safe_edit_message(query, "❌ 会话已过期，请重新开始")
+        return
+    
+    task = self.pending_batch_create[user_id]
+    task['creation_type'] = creation_type
+    
+    type_name_key = 'batch_create_group_title' if creation_type == "group" else 'batch_create_channel_title'
+    example_key = 'batch_create_step1_example' if creation_type == "group" else 'batch_create_step1_example_channel'
+    
+    text = f"""
+
+    def handle_batch_create_count_input(self, update: Update, context: CallbackContext, user_id: int, text: str):
+    """处理每账号创建数量输入"""
+    if user_id not in self.pending_batch_create:
+        self.safe_send_message(update, t(user_id, 'batch_create_session_expired_restart'))
+        return
+    
+    task = self.pending_batch_create[user_id]
+    
+    try:
+        count = int(text.strip())
+        if count < 1 or count > 10:
+            self.safe_send_message(update, t(user_id, 'batch_create_count_range_error'))
+            return
+        
+        task['count_per_account'] = count
+        
+        count_set_key = 'batch_create_count_set_group' if task['creation_type'] == 'group' else 'batch_create_count_set_channel'
+        
+        text = f"""
+
+    def _show_batch_create_confirm(self, update: Update, user_id: int):
+    """显示最终确认信息"""
+    if user_id not in self.pending_batch_create:
+        return
+    
+    task = self.pending_batch_create[user_id]
+    
+    total_to_create = task['valid_accounts'] * task['count_per_account']
+    
+    username_mode_text = t(user_id, 'batch_create_confirm_link_auto') if task.get('username_mode', 'auto') == 'auto' else t(user_id, 'batch_create_confirm_link_custom')
+    
+    admin_usernames = task.get('admin_usernames', [])
+    if admin_usernames:
+        admin_text = t(user_id, 'batch_create_confirm_admins').format(
+            count=len(admin_usernames),
+            admins=', '.join([f'@{u}' for u in admin_usernames[:3]]) + ('...' if len(admin_usernames) > 3 else '')
+        )
+    else:
+        admin_text = t(user_id, 'batch_create_confirm_admins').format(count=0, admins=t(user_id, 'batch_create_admins_none'))
+    
+    type_key = 'batch_create_confirm_type_group' if task['creation_type'] == 'group' else 'batch_create_confirm_type_channel'
+    
+    text = f"""
+
+    def handle_batch_create_execute(self, update: Update, context: CallbackContext, query, user_id: int):
+    """执行批量创建"""
+    query.answer("⏳ 开始创建...")
+    
+    if user_id not in self.pending_batch_create:
+        self.safe_edit_message(query, t(user_id, 'batch_create_session_expired'))
+        return
+    
+    task = self.pending_batch_create[user_id]
+    
+    # 在新线程中执行
+    def execute():
+        try:
+            self._execute_batch_create(update, context, user_id, task)
+        except Exception as e:
+            logger.error(f"Batch creation failed: {e}")
+            import traceback
+            traceback.print_exc()
+            context.bot.send_message(
+                chat_id=user_id,
+                text=f"{t(user_id, 'batch_create_failed')}\n\n{t(user_id, 'batch_create_error').format(error=str(e))}",
+                parse_mode='HTML'
+            )
+        finally:
+            if user_id in self.pending_batch_create:
+                del self.pending_batch_create[user_id]
+            self.db.save_user(user_id, "", "", "")
+    
+    thread = threading.Thread(target=execute, daemon=True)
+    thread.start()
+    
+    self.safe_edit_message(
+        query,
+        f"{t(user_id, 'batch_create_creating')}\n\n{t(user_id, 'batch_create_wait_report')}",
+        parse_mode='HTML'
+    )
+
+
+    def _execute_batch_create(self, update: Update, context: CallbackContext, user_id: int, task: Dict):
+    """实际执行批量创建"""
+    import asyncio
+    
+    accounts = task['accounts']
+    creation_type = task['creation_type']
+    
+    # 构建配置
+    batch_config = BatchCreationConfig(
+        creation_type=creation_type,
+        count_per_account=task['count_per_account'],
+        admin_username=task.get('admin_username', ''),  # 向后兼容
+        admin_usernames=task.get('admin_usernames', []),  # 新增：支持多个管理员
+        group_names=task.get('group_names', []),
+        group_descriptions=task.get('group_descriptions', []),
+        username_mode=task.get('username_mode', 'auto'),
+        custom_usernames=task.get('custom_usernames', [])
+    )
+    
+    # 创建进度消息（使用内联按钮）
+    total_to_create = task['valid_accounts'] * task['count_per_account']
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(t(user_id, 'batch_create_btn_view_log'), callback_data="batch_create_noop")]
+    ])
+    
+    progress_msg = context.bot.send_message(
+        chat_id=user_id,
+        text=f"{t(user_id, 'batch_create_starting')}\n\n{t(user_id, 'batch_create_progress').format(done=0, total=total_to_create, percent=0)}\n{t(user_id, 'batch_create_status_preparing')}",
+        parse_mode='HTML',
+        reply_markup=keyboard
+    )
+    
+    # 执行批量创建
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    last_update_count = 0
+    
+    def progress_callback(current, total, message):
+        nonlocal last_update_count
+        # 每5个更新一次，或者是最后一个
+        if current - last_update_count >= 5 or current == total:
+            try:
+                progress = int(current / total * 100)
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(t(user_id, 'batch_create_btn_view_log'), callback_data="batch_create_noop")]
+                ])
+                logger.info(f"📊 更新进度: {current}/{total} ({progress}%)")
+                print(f"📊 更新进度: {current}/{total} ({progress}%)", flush=True)
+                
+                context.bot.edit_message_text(
+                    chat_id=user_id,
+                    message_id=progress_msg.message_id,
+                    text=f"{t(user_id, 'batch_create_starting')}\n\n{t(user_id, 'batch_create_progress').format(done=current, total=total, percent=progress)}\n{message}",
+                    parse_mode='HTML',
+                    reply_markup=keyboard
+                )
+                last_update_count = current
+            except Exception as e:
+                logger.warning(f"⚠️ 更新进度消息失败: {e}")
+                print(f"⚠️ 更新进度消息失败: {e}", flush=True)
+    
+    try:
+        # 批量创建
+        logger.info(f"📊 开始批量创建 - 用户ID: {user_id}")
+        print(f"📊 开始批量创建 - 用户ID: {user_id}", flush=True)
+        
+        results = []
+        valid_accounts = [acc for acc in accounts if acc.is_valid and acc.daily_remaining > 0]
+        
+        logger.info(f"📋 有效账号数: {len(valid_accounts)}")
+        print(f"📋 有效账号数: {len(valid_accounts)}", flush=True)
+        
+        # 限制并发为10个账号
+        batch_size = min(len(valid_accounts), config.BATCH_CREATE_CONCURRENT)
+        logger.info(f"⚡ 批次大小: {batch_size} 个账号并发")
+        print(f"⚡ 批次大小: {batch_size} 个账号并发", flush=True)
+        
+        # 计算每个账号需要创建多少个
+        count_per_account = batch_config.count_per_account
+        logger.info(f"🔢 每账号创建数: {count_per_account}")
+        print(f"🔢 每账号创建数: {count_per_account}", flush=True)
+        
+        # 为每个账号创建指定数量的群组/频道
+        # 策略：10个账号并发处理，每个账号内的创建串行并添加延迟
+        
+        # 用于异步安全的结果收集和进度更新
+        results_lock = asyncio.Lock()
+        
+        async def process_account(account, account_idx, start_idx):
+            """为单个账号创建多个群组/频道（内部串行+延迟）"""
+            account_results = []
+            
+            for j in range(count_per_account):
+                creation_idx = start_idx + j
+                if creation_idx >= total_to_create:
+                    break
+                
+                logger.info(f"➕ 账号 {account.phone} 创建任务 #{creation_idx+1}/{total_to_create}")
+                print(f"➕ 账号 {account.phone} 创建任务 #{creation_idx+1}/{total_to_create}", flush=True)
+                
+                # 执行单个创建任务
+                result = await self.batch_creator.create_single_new(
+                    account,
+                    batch_config,
+                    creation_idx
+                )
+                account_results.append(result)
+                
+                # 异步安全地添加到总结果并更新进度
+                async with results_lock:
+                    results.append(result)
+                    progress_callback(len(results), total_to_create, t(user_id, 'batch_create_status_completed').format(count=len(results)))
+                
+                # 检查是否是账号冻结错误，如果是则立即停止该账号的后续创建
+                if result.status == 'failed' and result.error and 'FROZEN_METHOD_INVALID' in result.error:
+                    logger.warning(f"🛑 账号 {account.phone} 已冻结 (FROZEN_METHOD_INVALID)，停止该账号的后续创建")
+                    print(f"🛑 账号 {account.phone} 已冻结 (FROZEN_METHOD_INVALID)，停止该账号的后续创建", flush=True)
+                    # 标记剩余任务为跳过
+                    for k in range(j + 1, count_per_account):
+                        skipped_idx = start_idx + k
+                        if skipped_idx >= total_to_create:
+                            break
+                        skipped_result = BatchCreationResult(
+                            account_name=account.file_name,
+                            phone=account.phone or "未知",
+                            creation_type=batch_config.creation_type,
+                            name="",
+                            status='skipped',
+                            error=t(user_id, 'batch_create_account_frozen_skipped')
+                        )
+                        account_results.append(skipped_result)
+                        async with results_lock:
+                            results.append(skipped_result)
+                            progress_callback(len(results), total_to_create, t(user_id, 'batch_create_status_completed').format(count=len(results)))
+                    break
+                
+                # 在该账号的每次创建之后添加配置的延迟（避免触发Telegram频率限制）
+                # 注意：只有不是最后一次创建时才延迟
+                if j < count_per_account - 1:
+                    delay = random.uniform(config.BATCH_CREATE_MIN_INTERVAL, config.BATCH_CREATE_MAX_INTERVAL)
+                    logger.info(f"⏳ 账号 {account.phone} 创建间隔：等待 {delay:.1f} 秒...")
+                    print(f"⏳ 账号 {account.phone} 创建间隔：等待 {delay:.1f} 秒...", flush=True)
+                    await asyncio.sleep(delay)
+            
+            # 统计该账号结果
+            account_success = sum(1 for r in account_results if r.status == 'success')
+            account_failed = sum(1 for r in account_results if r.status == 'failed')
+            logger.info(f"✅ 账号 {account.phone} 完成: 成功 {account_success}, 失败 {account_failed}")
+            print(f"✅ 账号 {account.phone} 完成: 成功 {account_success}, 失败 {account_failed}", flush=True)
+            
+            return account_results
+        
+        # 异步批量处理函数
+        async def run_batch_creation():
+            """异步执行批量创建"""
+            nonlocal results
+            
+            # 分批处理账号（每批最多10个账号并发）
+            account_idx = 0
+            creation_idx = 0
+            
+            while account_idx < len(valid_accounts) and creation_idx < total_to_create:
+                # 确定本批次的账号数量
+                batch_end_idx = min(account_idx + batch_size, len(valid_accounts))
+                batch_accounts = valid_accounts[account_idx:batch_end_idx]
+                
+                logger.info(f"🚀 启动批次: {len(batch_accounts)} 个账号并发处理")
+                print(f"🚀 启动批次: {len(batch_accounts)} 个账号并发处理", flush=True)
+                
+                # 创建并发任务：每个账号一个任务
+                account_tasks = []
+                for i, account in enumerate(batch_accounts):
+                    logger.info(f"👤 准备账号: {account.phone} (批次内索引 {i+1}/{len(batch_accounts)})")
+                    print(f"👤 准备账号: {account.phone} (批次内索引 {i+1}/{len(batch_accounts)})", flush=True)
+                    
+                    # 每个账号的起始索引
+                    account_start_idx = creation_idx
+                    account_tasks.append(process_account(account, account_idx + i, account_start_idx))
+                    # 为下一个账号更新起始索引
+                    creation_idx += count_per_account
+                
+                # 并发执行本批次的所有账号任务
+                batch_results = await asyncio.gather(*account_tasks)
+                
+                # 更新账号索引
+                account_idx = batch_end_idx
+                
+                # 批次统计
+                total_batch_success = sum(sum(1 for r in acc_results if r.status == 'success') for acc_results in batch_results)
+                total_batch_failed = sum(sum(1 for r in acc_results if r.status == 'failed') for acc_results in batch_results)
+                logger.info(f"✅ 批次完成: 成功 {total_batch_success}, 失败 {total_batch_failed}")
+                print(f"✅ 批次完成: 成功 {total_batch_success}, 失败 {total_batch_failed}", flush=True)
+        
+        # 运行异步批量创建
+        loop.run_until_complete(run_batch_creation())
+        
+        # 关闭客户端
+        async def disconnect_clients():
+            for account in accounts:
+                if account.client:
+                    try:
+                        await account.client.disconnect()
+                    except Exception as e:
+                        logger.warning(f"⚠️ 关闭客户端失败: {e}")
+        
+        loop.run_until_complete(disconnect_clients())
+        
+        # 生成报告
+        report = self.batch_creator.generate_report(results, user_id)
+        
+        # 保存报告文件
+        timestamp = datetime.now(BEIJING_TZ).strftime("%Y%m%d_%H%M%S")
+        report_filename = f"batch_create_report_{timestamp}.txt"
+        report_path = os.path.join(config.RESULTS_DIR, report_filename)
+        
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write(report)
+        
+        # 发送统计信息
+        total = len(results)
+        success = len([r for r in results if r.status == 'success'])
+        failed = len([r for r in results if r.status == 'failed'])
+        skipped = len([r for r in results if r.status == 'skipped'])
+        
+        summary = f"""
+
+
+
+# ===== Handler Methods =====
+
+    def handle_batch_create_start(self, query):
+    """处理批量创建开始"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    # 检查功能是否启用
+    if not config.ENABLE_BATCH_CREATE or self.batch_creator is None:
+        self.safe_edit_message(query, t(user_id, 'batch_create_feature_disabled'))
+        return
+    
+    # 检查会员权限
+    is_member, level, expiry = self.db.check_membership(user_id)
+    if not is_member and not self.db.is_admin(user_id):
+        self.safe_edit_message(
+            query,
+            "⚠️ 批量创建功能需要会员权限\n\n请先开通会员",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("💳 开通会员", callback_data="vip_menu"),
+                InlineKeyboardButton(t(user_id, 'btn_back'), callback_data="back_to_main")
+            ]])
+        )
+        return
+    
+    text = f"""
+
+    def handle_batch_create_callbacks(self, update: Update, context: CallbackContext, query, data: str):
+    """处理批量创建回调"""
+    user_id = query.from_user.id
+    
+    if data == "batch_create_noop":
+        # 这是进度按钮的空操作回调
+        query.answer("实时进度更新中...")
+        return
+    elif data == "batch_create_type_group":
+        self.handle_batch_create_select_type(query, user_id, "group")
+    elif data == "batch_create_type_channel":
+        self.handle_batch_create_select_type(query, user_id, "channel")
+    elif data == "batch_create_skip_admin":
+        query.answer()
+        if user_id in self.pending_batch_create:
+            self.pending_batch_create[user_id]['admin_username'] = ""
+            fake_update = self._create_fake_update(user_id)
+            self._ask_for_group_names(fake_update, user_id)
+    elif data == "batch_create_username_custom":
+        query.answer()
+        if user_id in self.pending_batch_create:
+            self.pending_batch_create[user_id]['username_mode'] = 'custom'
+            text = f"""
+
+    def handle_batch_create_select_type(self, query, user_id: int, creation_type: str):
+    """选择创建类型"""
+    query.answer()
+    
+    if user_id not in self.pending_batch_create:
+        self.safe_edit_message(query, "❌ 会话已过期，请重新开始")
+        return
+    
+    task = self.pending_batch_create[user_id]
+    task['creation_type'] = creation_type
+    
+    type_name_key = 'batch_create_group_title' if creation_type == "group" else 'batch_create_channel_title'
+    example_key = 'batch_create_step1_example' if creation_type == "group" else 'batch_create_step1_example_channel'
+    
+    text = f"""
+
+    def handle_batch_create_count_input(self, update: Update, context: CallbackContext, user_id: int, text: str):
+    """处理每账号创建数量输入"""
+    if user_id not in self.pending_batch_create:
+        self.safe_send_message(update, t(user_id, 'batch_create_session_expired_restart'))
+        return
+    
+    task = self.pending_batch_create[user_id]
+    
+    try:
+        count = int(text.strip())
+        if count < 1 or count > 10:
+            self.safe_send_message(update, t(user_id, 'batch_create_count_range_error'))
+            return
+        
+        task['count_per_account'] = count
+        
+        count_set_key = 'batch_create_count_set_group' if task['creation_type'] == 'group' else 'batch_create_count_set_channel'
+        
+        text = f"""
+
+    def _show_batch_create_confirm(self, update: Update, user_id: int):
+    """显示最终确认信息"""
+    if user_id not in self.pending_batch_create:
+        return
+    
+    task = self.pending_batch_create[user_id]
+    
+    total_to_create = task['valid_accounts'] * task['count_per_account']
+    
+    username_mode_text = t(user_id, 'batch_create_confirm_link_auto') if task.get('username_mode', 'auto') == 'auto' else t(user_id, 'batch_create_confirm_link_custom')
+    
+    admin_usernames = task.get('admin_usernames', [])
+    if admin_usernames:
+        admin_text = t(user_id, 'batch_create_confirm_admins').format(
+            count=len(admin_usernames),
+            admins=', '.join([f'@{u}' for u in admin_usernames[:3]]) + ('...' if len(admin_usernames) > 3 else '')
+        )
+    else:
+        admin_text = t(user_id, 'batch_create_confirm_admins').format(count=0, admins=t(user_id, 'batch_create_admins_none'))
+    
+    type_key = 'batch_create_confirm_type_group' if task['creation_type'] == 'group' else 'batch_create_confirm_type_channel'
+    
+    text = f"""
+
+    def handle_batch_create_execute(self, update: Update, context: CallbackContext, query, user_id: int):
+    """执行批量创建"""
+    query.answer("⏳ 开始创建...")
+    
+    if user_id not in self.pending_batch_create:
+        self.safe_edit_message(query, t(user_id, 'batch_create_session_expired'))
+        return
+    
+    task = self.pending_batch_create[user_id]
+    
+    # 在新线程中执行
+    def execute():
+        try:
+            self._execute_batch_create(update, context, user_id, task)
+        except Exception as e:
+            logger.error(f"Batch creation failed: {e}")
+            import traceback
+            traceback.print_exc()
+            context.bot.send_message(
+                chat_id=user_id,
+                text=f"{t(user_id, 'batch_create_failed')}\n\n{t(user_id, 'batch_create_error').format(error=str(e))}",
+                parse_mode='HTML'
+            )
+        finally:
+            if user_id in self.pending_batch_create:
+                del self.pending_batch_create[user_id]
+            self.db.save_user(user_id, "", "", "")
+    
+    thread = threading.Thread(target=execute, daemon=True)
+    thread.start()
+    
+    self.safe_edit_message(
+        query,
+        f"{t(user_id, 'batch_create_creating')}\n\n{t(user_id, 'batch_create_wait_report')}",
+        parse_mode='HTML'
+    )
+
+
+    def _execute_batch_create(self, update: Update, context: CallbackContext, user_id: int, task: Dict):
+    """实际执行批量创建"""
+    import asyncio
+    
+    accounts = task['accounts']
+    creation_type = task['creation_type']
+    
+    # 构建配置
+    batch_config = BatchCreationConfig(
+        creation_type=creation_type,
+        count_per_account=task['count_per_account'],
+        admin_username=task.get('admin_username', ''),  # 向后兼容
+        admin_usernames=task.get('admin_usernames', []),  # 新增：支持多个管理员
+        group_names=task.get('group_names', []),
+        group_descriptions=task.get('group_descriptions', []),
+        username_mode=task.get('username_mode', 'auto'),
+        custom_usernames=task.get('custom_usernames', [])
+    )
+    
+    # 创建进度消息（使用内联按钮）
+    total_to_create = task['valid_accounts'] * task['count_per_account']
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(t(user_id, 'batch_create_btn_view_log'), callback_data="batch_create_noop")]
+    ])
+    
+    progress_msg = context.bot.send_message(
+        chat_id=user_id,
+        text=f"{t(user_id, 'batch_create_starting')}\n\n{t(user_id, 'batch_create_progress').format(done=0, total=total_to_create, percent=0)}\n{t(user_id, 'batch_create_status_preparing')}",
+        parse_mode='HTML',
+        reply_markup=keyboard
+    )
+    
+    # 执行批量创建
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    last_update_count = 0
+    
+    def progress_callback(current, total, message):
+        nonlocal last_update_count
+        # 每5个更新一次，或者是最后一个
+        if current - last_update_count >= 5 or current == total:
+            try:
+                progress = int(current / total * 100)
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(t(user_id, 'batch_create_btn_view_log'), callback_data="batch_create_noop")]
+                ])
+                logger.info(f"📊 更新进度: {current}/{total} ({progress}%)")
+                print(f"📊 更新进度: {current}/{total} ({progress}%)", flush=True)
+                
+                context.bot.edit_message_text(
+                    chat_id=user_id,
+                    message_id=progress_msg.message_id,
+                    text=f"{t(user_id, 'batch_create_starting')}\n\n{t(user_id, 'batch_create_progress').format(done=current, total=total, percent=progress)}\n{message}",
+                    parse_mode='HTML',
+                    reply_markup=keyboard
+                )
+                last_update_count = current
+            except Exception as e:
+                logger.warning(f"⚠️ 更新进度消息失败: {e}")
+                print(f"⚠️ 更新进度消息失败: {e}", flush=True)
+    
+    try:
+        # 批量创建
+        logger.info(f"📊 开始批量创建 - 用户ID: {user_id}")
+        print(f"📊 开始批量创建 - 用户ID: {user_id}", flush=True)
+        
+        results = []
+        valid_accounts = [acc for acc in accounts if acc.is_valid and acc.daily_remaining > 0]
+        
+        logger.info(f"📋 有效账号数: {len(valid_accounts)}")
+        print(f"📋 有效账号数: {len(valid_accounts)}", flush=True)
+        
+        # 限制并发为10个账号
+        batch_size = min(len(valid_accounts), config.BATCH_CREATE_CONCURRENT)
+        logger.info(f"⚡ 批次大小: {batch_size} 个账号并发")
+        print(f"⚡ 批次大小: {batch_size} 个账号并发", flush=True)
+        
+        # 计算每个账号需要创建多少个
+        count_per_account = batch_config.count_per_account
+        logger.info(f"🔢 每账号创建数: {count_per_account}")
+        print(f"🔢 每账号创建数: {count_per_account}", flush=True)
+        
+        # 为每个账号创建指定数量的群组/频道
+        # 策略：10个账号并发处理，每个账号内的创建串行并添加延迟
+        
+        # 用于异步安全的结果收集和进度更新
+        results_lock = asyncio.Lock()
+        
+        async def process_account(account, account_idx, start_idx):
+            """为单个账号创建多个群组/频道（内部串行+延迟）"""
+            account_results = []
+            
+            for j in range(count_per_account):
+                creation_idx = start_idx + j
+                if creation_idx >= total_to_create:
+                    break
+                
+                logger.info(f"➕ 账号 {account.phone} 创建任务 #{creation_idx+1}/{total_to_create}")
+                print(f"➕ 账号 {account.phone} 创建任务 #{creation_idx+1}/{total_to_create}", flush=True)
+                
+                # 执行单个创建任务
+                result = await self.batch_creator.create_single_new(
+                    account,
+                    batch_config,
+                    creation_idx
+                )
+                account_results.append(result)
+                
+                # 异步安全地添加到总结果并更新进度
+                async with results_lock:
+                    results.append(result)
+                    progress_callback(len(results), total_to_create, t(user_id, 'batch_create_status_completed').format(count=len(results)))
+                
+                # 检查是否是账号冻结错误，如果是则立即停止该账号的后续创建
+                if result.status == 'failed' and result.error and 'FROZEN_METHOD_INVALID' in result.error:
+                    logger.warning(f"🛑 账号 {account.phone} 已冻结 (FROZEN_METHOD_INVALID)，停止该账号的后续创建")
+                    print(f"🛑 账号 {account.phone} 已冻结 (FROZEN_METHOD_INVALID)，停止该账号的后续创建", flush=True)
+                    # 标记剩余任务为跳过
+                    for k in range(j + 1, count_per_account):
+                        skipped_idx = start_idx + k
+                        if skipped_idx >= total_to_create:
+                            break
+                        skipped_result = BatchCreationResult(
+                            account_name=account.file_name,
+                            phone=account.phone or "未知",
+                            creation_type=batch_config.creation_type,
+                            name="",
+                            status='skipped',
+                            error=t(user_id, 'batch_create_account_frozen_skipped')
+                        )
+                        account_results.append(skipped_result)
+                        async with results_lock:
+                            results.append(skipped_result)
+                            progress_callback(len(results), total_to_create, t(user_id, 'batch_create_status_completed').format(count=len(results)))
+                    break
+                
+                # 在该账号的每次创建之后添加配置的延迟（避免触发Telegram频率限制）
+                # 注意：只有不是最后一次创建时才延迟
+                if j < count_per_account - 1:
+                    delay = random.uniform(config.BATCH_CREATE_MIN_INTERVAL, config.BATCH_CREATE_MAX_INTERVAL)
+                    logger.info(f"⏳ 账号 {account.phone} 创建间隔：等待 {delay:.1f} 秒...")
+                    print(f"⏳ 账号 {account.phone} 创建间隔：等待 {delay:.1f} 秒...", flush=True)
+                    await asyncio.sleep(delay)
+            
+            # 统计该账号结果
+            account_success = sum(1 for r in account_results if r.status == 'success')
+            account_failed = sum(1 for r in account_results if r.status == 'failed')
+            logger.info(f"✅ 账号 {account.phone} 完成: 成功 {account_success}, 失败 {account_failed}")
+            print(f"✅ 账号 {account.phone} 完成: 成功 {account_success}, 失败 {account_failed}", flush=True)
+            
+            return account_results
+        
+        # 异步批量处理函数
+        async def run_batch_creation():
+            """异步执行批量创建"""
+            nonlocal results
+            
+            # 分批处理账号（每批最多10个账号并发）
+            account_idx = 0
+            creation_idx = 0
+            
+            while account_idx < len(valid_accounts) and creation_idx < total_to_create:
+                # 确定本批次的账号数量
+                batch_end_idx = min(account_idx + batch_size, len(valid_accounts))
+                batch_accounts = valid_accounts[account_idx:batch_end_idx]
+                
+                logger.info(f"🚀 启动批次: {len(batch_accounts)} 个账号并发处理")
+                print(f"🚀 启动批次: {len(batch_accounts)} 个账号并发处理", flush=True)
+                
+                # 创建并发任务：每个账号一个任务
+                account_tasks = []
+                for i, account in enumerate(batch_accounts):
+                    logger.info(f"👤 准备账号: {account.phone} (批次内索引 {i+1}/{len(batch_accounts)})")
+                    print(f"👤 准备账号: {account.phone} (批次内索引 {i+1}/{len(batch_accounts)})", flush=True)
+                    
+                    # 每个账号的起始索引
+                    account_start_idx = creation_idx
+                    account_tasks.append(process_account(account, account_idx + i, account_start_idx))
+                    # 为下一个账号更新起始索引
+                    creation_idx += count_per_account
+                
+                # 并发执行本批次的所有账号任务
+                batch_results = await asyncio.gather(*account_tasks)
+                
+                # 更新账号索引
+                account_idx = batch_end_idx
+                
+                # 批次统计
+                total_batch_success = sum(sum(1 for r in acc_results if r.status == 'success') for acc_results in batch_results)
+                total_batch_failed = sum(sum(1 for r in acc_results if r.status == 'failed') for acc_results in batch_results)
+                logger.info(f"✅ 批次完成: 成功 {total_batch_success}, 失败 {total_batch_failed}")
+                print(f"✅ 批次完成: 成功 {total_batch_success}, 失败 {total_batch_failed}", flush=True)
+        
+        # 运行异步批量创建
+        loop.run_until_complete(run_batch_creation())
+        
+        # 关闭客户端
+        async def disconnect_clients():
+            for account in accounts:
+                if account.client:
+                    try:
+                        await account.client.disconnect()
+                    except Exception as e:
+                        logger.warning(f"⚠️ 关闭客户端失败: {e}")
+        
+        loop.run_until_complete(disconnect_clients())
+        
+        # 生成报告
+        report = self.batch_creator.generate_report(results, user_id)
+        
+        # 保存报告文件
+        timestamp = datetime.now(BEIJING_TZ).strftime("%Y%m%d_%H%M%S")
+        report_filename = f"batch_create_report_{timestamp}.txt"
+        report_path = os.path.join(config.RESULTS_DIR, report_filename)
+        
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write(report)
+        
+        # 发送统计信息
+        total = len(results)
+        success = len([r for r in results if r.status == 'success'])
+        failed = len([r for r in results if r.status == 'failed'])
+        skipped = len([r for r in results if r.status == 'skipped'])
+        
+        summary = f"""
+

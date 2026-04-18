@@ -1781,3 +1781,2455 @@ async def batch_update_profiles_concurrent(session_list: List[Tuple[str, str]],
 # ================================
 
 
+
+
+# ===== Handler Methods from EnhancedBot =====
+
+    def get_zip_name_translation_key(self, status: str) -> str:
+    """Map internal status to ZIP file name translation key
+    
+    Args:
+        status: Internal status name (Chinese)
+        
+    Returns:
+        Translation key for ZIP file naming
+    """
+    zip_map = {
+        "无限制": "zip_no_restriction",
+        "垃圾邮件": "zip_spambot",
+        "冻结": "zip_frozen",
+        "封禁": "zip_banned",
+        "连接错误": "zip_connection_error",
+    }
+    return zip_map.get(status, "zip_no_restriction")
+
+
+    def sanitize_filename(self, filename: str) -> str:
+    """清理文件名，保留 Emoji 和括号
+    
+    只移除文件系统不允许的字符，保留所有Unicode字符包括Emoji。
+    
+    移除的字符（Windows和Unix文件系统不允许）:
+    - 反斜杠 (\)、正斜杠 (/)、冒号 (:)
+    - 星号 (*)、问号 (?)、引号 (")
+    - 小于号 (<)、大于号 (>)、竖线 (|)
+    
+    保留的字符:
+    - Emoji (如 🇮🇳, 🎉)
+    - 中文括号 （）
+    - 所有Unicode字符（中文、日文、俄文等）
+    - 加号 (+)、下划线 (_)、连字符 (-) 等
+    
+    示例:
+    - '🇮🇳 随机混合国家（有密码）' -> '🇮🇳 随机混合国家（有密码）'
+    - 'test/file:name' -> 'testfilename'
+    """
+    # 只移除文件系统不允许的字符
+    # Windows和Unix都不允许这些字符: \ / : * ? " < > |
+    invalid_chars = r'[\\/:*?"<>|]'
+    filename = re.sub(invalid_chars, '', filename)
+    
+    # 限制长度（保留扩展名空间）
+    max_length = 200
+    if len(filename) > max_length:
+        filename = filename[:max_length]
+    
+    # 去除首尾空格和点号
+    filename = filename.strip('. ')
+    
+    # 如果文件名为空，使用默认名
+    if not filename:
+        filename = 'unnamed_file'
+    
+    return filename
+
+
+    def handle_photo(self, update: Update, context: CallbackContext):
+    """处理图片上传（用于广播媒体和资料头像）"""
+    user_id = update.effective_user.id
+    
+    # 检查用户状态
+    try:
+        conn = sqlite3.connect(config.DB_NAME)
+        c = conn.cursor()
+        c.execute("SELECT status FROM users WHERE user_id = ?", (user_id,))
+        row = c.fetchone()
+        conn.close()
+        
+        if not row:
+            return
+        
+        user_status = row[0]
+        
+        # 处理资料头像上传
+        if user_status == "profile_custom_upload_photo":
+            self.handle_profile_photo_upload(update, context, user_id)
+            return
+        
+        # 处理广播媒体上传
+        if user_status != "waiting_broadcast_media":
+            # 不是在等待上传，忽略
+            return
+    except:
+        return
+    
+    # 检查是否有待处理的广播任务
+    if user_id not in self.pending_broadcasts:
+        self.safe_send_message(update, "❌ 没有待处理的广播任务")
+        return
+    
+    task = self.pending_broadcasts[user_id]
+    
+    # 获取最大尺寸的图片
+    photo = update.message.photo[-1]
+    
+    # 保存图片 file_id
+    task['media_file_id'] = photo.file_id
+    task['media_type'] = 'photo'
+    
+    # 清空用户状态
+    self.db.save_user(user_id, "", "", "")
+    
+    # 发送成功消息并返回编辑器
+    self.safe_send_message(
+        update,
+        "✅ <b>图片已保存</b>\n\n返回编辑器继续设置",
+        'HTML'
+    )
+    
+    # 模拟 query 对象返回编辑器
+    class FakeQuery:
+        def __init__(self, user, chat):
+            self.from_user = user
+            self.message = type('obj', (object,), {'chat_id': chat.id, 'message_id': None})()
+        def answer(self):
+            pass
+    
+    fake_query = FakeQuery(update.effective_user, update.effective_chat)
+    
+    # 发送新消息显示编辑器
+    self.show_broadcast_wizard_editor_as_new_message(update, context)
+
+
+    def handle_rename_start(self, query):
+    """开始文件重命名流程"""
+    user_id = query.from_user.id
+    query.answer()
+    
+    # 初始化任务
+    self.pending_rename[user_id] = {
+        'temp_dir': None,
+        'file_path': None,
+        'orig_name': None,
+        'ext': None
+    }
+    
+    # 设置用户状态
+    self.db.save_user(
+        user_id,
+        query.from_user.username or "",
+        query.from_user.first_name or "",
+        "waiting_rename_file"
+    )
+    
+    text = f"""
+
+    def handle_rename_file_upload(self, update: Update, context: CallbackContext, document):
+    """处理重命名文件上传"""
+    user_id = update.effective_user.id
+    
+    if user_id not in self.pending_rename:
+        self.safe_send_message(update, t(user_id, 'rename_no_task'))
+        return
+    
+    # 创建临时目录
+    temp_dir = tempfile.mkdtemp(prefix="temp_rename_")
+    orig_name = document.file_name
+    
+    # 分离文件名和扩展名
+    if '.' in orig_name:
+        name_parts = orig_name.rsplit('.', 1)
+        base_name = name_parts[0]
+        ext = '.' + name_parts[1]
+    else:
+        base_name = orig_name
+        ext = ''
+    
+    # 下载文件
+    file_path = os.path.join(temp_dir, orig_name)
+    try:
+        document.get_file().download(file_path)
+    except Exception as e:
+        self.safe_send_message(update, t(user_id, 'rename_download_failed').format(error=str(e)))
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return
+    
+    # 保存任务信息
+    self.pending_rename[user_id]['temp_dir'] = temp_dir
+    self.pending_rename[user_id]['file_path'] = file_path
+    self.pending_rename[user_id]['orig_name'] = orig_name
+    self.pending_rename[user_id]['ext'] = ext
+    
+    # 更新状态，等待新文件名
+    self.db.save_user(
+        user_id,
+        update.effective_user.username or "",
+        update.effective_user.first_name or "",
+        "waiting_rename_newname"
+    )
+    
+    text = f"""
+
+    def handle_rename_newname_input(self, update: Update, context: CallbackContext, user_id: int, text: str):
+    """处理新文件名输入"""
+    if user_id not in self.pending_rename:
+        self.safe_send_message(update, t(user_id, 'rename_no_task'))
+        return
+    
+    task = self.pending_rename[user_id]
+    
+    # 调试日志：记录原始输入
+    logger.debug(f"重命名输入 - 用户{user_id} - 原始文本: {repr(text)}")
+    logger.debug(f"重命名输入 - 用户{user_id} - text.strip(): {repr(text.strip())}")
+    
+    # 清理并验证新文件名
+    new_name = self.sanitize_filename(text.strip())
+    logger.debug(f"重命名输入 - 用户{user_id} - 清理后: {repr(new_name)}")
+    
+    if not new_name:
+        self.safe_send_message(update, t(user_id, 'rename_invalid_name'))
+        return
+    
+    # 构建完整的新文件名
+    new_filename = new_name + task['ext']
+    new_file_path = os.path.join(task['temp_dir'], new_filename)
+    
+    # 重命名文件
+    try:
+        shutil.move(task['file_path'], new_file_path)
+    except Exception as e:
+        self.safe_send_message(update, t(user_id, 'rename_failed').format(error=str(e)))
+        self.cleanup_rename_task(user_id)
+        return
+    
+    # 发送重命名后的文件
+    # 注意：显式指定filename参数以确保Telegram使用正确的文件名
+    old_name_html = f"<code>{task['orig_name']}</code>"
+    new_name_html = f"<code>{new_filename}</code>"
+    caption = (
+        f"<b>{t(user_id, 'rename_success')}</b>\n\n"
+        f"{t(user_id, 'rename_old_name').format(old_name=old_name_html)}\n"
+        f"{t(user_id, 'rename_new_name').format(new_name=new_name_html)}\n\n"
+        f"{t(user_id, 'rename_telegram_tip')}"
+    )
+    
+    if self.send_document_safely(user_id, new_file_path, caption, new_filename):
+        self.safe_send_message(update, f"<b>{t(user_id, 'rename_file_sent')}</b>", 'HTML')
+    else:
+        self.safe_send_message(update, t(user_id, 'rename_send_failed'))
+    
+    # 清理任务
+    self.cleanup_rename_task(user_id)
+
+
+    def _ask_for_group_names(self, update: Update, user_id: int):
+    """询问群组名称和简介"""
+    task = self.pending_batch_create[user_id]
+    
+    total_to_create = task['valid_accounts'] * task['count_per_account']
+    
+    admin_usernames = task.get('admin_usernames', [])
+    admin_display = ', '.join([f"@{u}" for u in admin_usernames]) if admin_usernames else t(user_id, 'batch_create_admins_none')
+    
+    step3_title_key = 'batch_create_step3_title_group' if task['creation_type'] == 'group' else 'batch_create_step3_title_channel'
+    step3_prompt_key = 'batch_create_step3_prompt' if task['creation_type'] == 'group' else 'batch_create_step3_prompt_channel'
+    step3_format_key = 'batch_create_step3_format_group' if task['creation_type'] == 'group' else 'batch_create_step3_format_channel'
+    
+    text = f"""
+
+    def handle_batch_create_names_input(self, update: Update, context: CallbackContext, user_id: int, text: str):
+    """处理群组名称和简介输入"""
+    if user_id not in self.pending_batch_create:
+        self.safe_send_message(update, "❌ 会话已过期，请重新开始")
+        return
+    
+    task = self.pending_batch_create[user_id]
+    
+    try:
+        lines = text.strip().split('\n')
+        group_names = []
+        group_descriptions = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            if '|' in line:
+                parts = line.split('|', 1)
+                name = parts[0].strip()
+                desc = parts[1].strip() if len(parts) > 1 else ""
+            else:
+                name = line
+                desc = ""
+            
+            if name:
+                group_names.append(name)
+                group_descriptions.append(desc)
+        
+        if not group_names:
+            self.safe_send_message(update, "❌ 未找到有效的名称，请重新输入")
+            return
+        
+        task['group_names'] = group_names
+        task['group_descriptions'] = group_descriptions
+        
+        names_saved_key = 'batch_create_names_saved_group' if task['creation_type'] == 'group' else 'batch_create_names_saved_channel'
+        step4_title_key = 'batch_create_step4_title_group' if task['creation_type'] == 'group' else 'batch_create_step4_title_channel'
+        
+        text = f"""
+
+    def handle_batch_create_usernames_input(self, update: Update, context: CallbackContext, user_id: int, text: str):
+    """处理自定义用户名输入"""
+    if user_id not in self.pending_batch_create:
+        self.safe_send_message(update, "❌ 会话已过期，请重新开始")
+        return
+    
+    task = self.pending_batch_create[user_id]
+    
+    try:
+        lines = text.strip().split('\n')
+        custom_usernames = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # 移除 @ 前缀
+            username = line.lstrip('@')
+            if username:
+                custom_usernames.append(username)
+        
+        if not custom_usernames:
+            self.safe_send_message(update, "❌ 未找到有效的用户名，请重新输入")
+            return
+        
+        task['custom_usernames'] = custom_usernames
+        
+        # 显示确认信息
+        self._show_batch_create_confirm(update, user_id)
+        
+    except Exception as e:
+        self.safe_send_message(update, f"❌ 解析失败：{str(e)}")
+
+
+    def process_batch_create_names_file(self, update: Update, context: CallbackContext, document, user_id: int):
+    """处理群组名称文件上传"""
+    if user_id not in self.pending_batch_create:
+        self.safe_send_message(update, "❌ 会话已过期，请重新开始")
+        return
+    
+    try:
+        # 下载文件
+        file = document.get_file()
+        temp_file = tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.txt', encoding='utf-8')
+        file.download(temp_file.name)
+        temp_file.close()
+        
+        # 读取文件内容
+        with open(temp_file.name, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # 清理临时文件
+        os.unlink(temp_file.name)
+        
+        # 使用现有的处理逻辑
+        fake_update = self._create_fake_update(user_id)
+        self.handle_batch_create_names_input(fake_update, context, user_id, content)
+        
+    except Exception as e:
+        logger.error(f"处理名称文件失败: {e}")
+        self.safe_send_message(update, f"❌ 文件处理失败：{str(e)}")
+
+
+    def process_batch_create_usernames_file(self, update: Update, context: CallbackContext, document, user_id: int):
+    """处理用户名文件上传"""
+    if user_id not in self.pending_batch_create:
+        self.safe_send_message(update, "❌ 会话已过期，请重新开始")
+        return
+    
+    try:
+        # 下载文件
+        file = document.get_file()
+        temp_file = tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.txt', encoding='utf-8')
+        file.download(temp_file.name)
+        temp_file.close()
+        
+        # 读取文件内容
+        with open(temp_file.name, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # 清理临时文件
+        os.unlink(temp_file.name)
+        
+        # 使用现有的处理逻辑
+        fake_update = self._create_fake_update(user_id)
+        self.handle_batch_create_usernames_input(fake_update, context, user_id, content)
+        
+    except Exception as e:
+        logger.error(f"处理用户名文件失败: {e}")
+        self.safe_send_message(update, f"❌ 文件处理失败：{str(e)}")
+
+
+
+
+    def _generate_profile_update_report(self, context: CallbackContext, user_id: int, results: Dict, progress_msg):
+    """生成资料修改详细报告和打包结果文件"""
+    logger.info("📊 开始生成详细报告和打包文件...")
+    
+    timestamp = datetime.now(BEIJING_TZ).strftime("%Y%m%d_%H%M%S")
+    total = len(results['success']) + len(results['failed'])
+    success_count = len(results['success'])
+    failed_count = len(results['failed'])
+    
+    # 统计错误类型
+    error_stats = {}
+    for file_path, file_name, detail in results['failed']:
+        error_type = detail.get('error_type', 'Unknown')
+        # 获取友好的错误名称
+        if error_type in ERROR_TYPE_TO_TRANSLATION_KEY:
+            error_name = get_profile_error_message(user_id, error_type)
+        else:
+            error_name = error_type
+        
+        if error_name not in error_stats:
+            error_stats[error_name] = 0
+        error_stats[error_name] += 1
+    
+    # ========================================
+    # 1. 生成详细的TXT报告
+    # ========================================
+    report_lines = []
+    
+    report_lines.append("=" * 80)
+    report_lines.append(t(user_id, 'profile_report_title'))
+    report_lines.append("=" * 80)
+    report_lines.append(f"{t(user_id, 'profile_report_time')} {datetime.now(BEIJING_TZ).strftime('%Y-%m-%d %H:%M:%S')}")
+    report_lines.append(t(user_id, 'profile_report_summary').format(total=total, success=success_count, failed=failed_count))
+    report_lines.append("")
+    
+    # 成功的账号详情
+    if results['success']:
+        report_lines.append("=" * 80)
+        report_lines.append(t(user_id, 'profile_report_success_title').format(count=success_count))
+        report_lines.append("=" * 80)
+        for idx, (file_path, file_name, detail) in enumerate(results['success'], 1):
+            report_lines.append(f"\n{idx}. {detail.get('phone', file_name)}")
+            report_lines.append(f"   {t(user_id, 'profile_report_file')} {file_name}")
+            
+            # 显示变更详情 - 使用"修改前xxx 修改后xxx"格式
+            changes = detail.get('changes', {})
+            
+            # 姓名修改
+            if 'name' in changes and changes['name'].get('success'):
+                old_name = changes['name'].get('old', '').strip()
+                new_name = changes['name'].get('new', '').strip()
+                if old_name and new_name:
+                    report_lines.append(f"   {t(user_id, 'profile_report_name_change').format(before=old_name, after=new_name)}")
+                elif new_name:
+                    report_lines.append(f"   - {t(user_id, 'profile_config_name')} {t(user_id, 'profile_report_name_change').format(before='', after=new_name)}")
+            
+            # 头像修改
+            if 'photo' in changes and changes['photo'].get('success'):
+                action = changes['photo'].get('action', 'deleted')
+                if action == 'deleted':
+                    report_lines.append(f"   {t(user_id, 'profile_report_avatar_deleted')}")
+                elif action == 'uploaded':
+                    report_lines.append(f"   {t(user_id, 'profile_report_avatar_uploaded')}")
+            
+            # 简介修改
+            if 'bio' in changes and changes['bio'].get('success'):
+                old_bio = changes['bio'].get('old', '').strip()
+                new_bio = changes['bio'].get('new', '').strip()
+                if old_bio and new_bio:
+                    # 限制显示长度，避免报告太长
+                    old_bio_display = old_bio[:30] + '...' if len(old_bio) > 30 else old_bio
+                    new_bio_display = new_bio[:30] + '...' if len(new_bio) > 30 else new_bio
+                    report_lines.append(f"   {t(user_id, 'profile_report_bio_change').format(before=old_bio_display, after=new_bio_display)}")
+                elif new_bio:
+                    new_bio_display = new_bio[:30] + '...' if len(new_bio) > 30 else new_bio
+                    report_lines.append(f"   {t(user_id, 'profile_report_bio_change').format(before=t(user_id, 'profile_none'), after=new_bio_display)}")
+                elif old_bio:
+                    old_bio_display = old_bio[:30] + '...' if len(old_bio) > 30 else old_bio
+                    report_lines.append(f"   {t(user_id, 'profile_report_bio_change').format(before=old_bio_display, after=t(user_id, 'profile_bio_cleared_inline'))}")
+                else:
+                    report_lines.append(f"   {t(user_id, 'profile_report_bio_cleared')}")
+            
+            # 用户名修改
+            if 'username' in changes and changes['username'].get('success'):
+                old_username = changes['username'].get('old', '').strip()
+                new_username = changes['username'].get('new', '').strip()
+                
+                # 格式化用户名显示
+                if old_username and old_username != '无':
+                    old_display = old_username if old_username.startswith('@') else f"@{old_username}"
+                else:
+                    old_display = "(无)"
+                
+                if new_username and new_username != '已删除':
+                    new_display = new_username if new_username.startswith('@') else f"@{new_username}"
+                else:
+                    new_display = "(已删除)"
+                
+                report_lines.append(f"   {t(user_id, 'profile_report_username_change').format(before=old_display, after=new_display)}")
+        
+        report_lines.append("")
+    
+    # 失败的账号详情
+    if results['failed']:
+        report_lines.append("=" * 80)
+        report_lines.append(t(user_id, 'profile_report_failed_title').format(count=failed_count))
+        report_lines.append("=" * 80)
+        for idx, (file_path, file_name, detail) in enumerate(results['failed'], 1):
+            report_lines.append(f"\n{idx}. {detail.get('phone', file_name) if detail.get('phone') else file_name}")
+            report_lines.append(f"   {t(user_id, 'profile_report_file')} {file_name}")
+            error_type = detail.get('error_type', 'Unknown')
+            error_message = detail.get('error', t(user_id, 'profile_error_unknown'))
+            report_lines.append(f"   {t(user_id, 'profile_report_error_type')} {error_type}")
+            report_lines.append(f"   {t(user_id, 'profile_report_error_reason')} {error_message}")
+        
+        report_lines.append("")
+    
+    # 错误统计
+    if error_stats:
+        report_lines.append("=" * 80)
+        report_lines.append(t(user_id, 'profile_report_error_stats'))
+        report_lines.append("=" * 80)
+        for error_name, count in sorted(error_stats.items(), key=lambda x: x[1], reverse=True):
+            report_lines.append(f"• {error_name}: {count}")
+        report_lines.append("")
+    
+    # 保存报告文件
+    report_content = "\n".join(report_lines)
+    report_path = os.path.join(config.RESULTS_DIR, f"profile_report_{timestamp}.txt")
+    
+    try:
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write(report_content)
+        logger.info(f"✅ 报告文件已生成: {report_path}")
+    except Exception as e:
+        logger.error(f"❌ 生成报告文件失败: {e}")
+    
+    # ========================================
+    # 2. 打包成功的账号文件
+    # ========================================
+    success_zip_path = None
+    if results['success']:
+        logger.info(f"📦 开始打包成功的账号文件...")
+        success_zip_path = os.path.join(config.RESULTS_DIR, f"profile_success_{success_count}_{timestamp}.zip")
+        
+        try:
+            with zipfile.ZipFile(success_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                added_paths = set()  # 追踪已添加的文件路径，避免重复
+                
+                for file_path, file_name, detail in results['success']:
+                    original_file_path = detail.get('file_path', file_path)
+                    # 提取手机号作为前缀
+                    phone = extract_phone_from_path(original_file_path) or extract_phone_from_path(file_name) or file_name.replace('.session', '').replace('.json', '')
+                    
+                    try:
+                        # 判断文件类型
+                        if os.path.isdir(original_file_path):
+                            # TData格式：打包整个目录，使用手机号作为前缀
+                            # 获取目录名（通常是tdata）
+                            tdata_dirname = os.path.basename(original_file_path)
+                            
+                            for root, dirs, files in os.walk(original_file_path):
+                                for file in files:
+                                    file_full_path = os.path.join(root, file)
+                                    rel_path = os.path.relpath(file_full_path, original_file_path)
+                                    # 包含tdata目录名在路径中: 手机号/tdata/D877F783D5D3EF8C/...
+                                    arc_name = f"{phone}/{tdata_dirname}/{rel_path}"
+                                    
+                                    if arc_name not in added_paths:
+                                        added_paths.add(arc_name)
+                                        zipf.write(file_full_path, arc_name)
+                        else:
+                            # Session格式：直接打包到ZIP根目录，使用手机号作为文件名
+                            # 格式：手机号.session 和 手机号.json（不要手机号文件夹）
+                            if os.path.exists(original_file_path):
+                                arc_name = f"{phone}.session"
+                                if arc_name not in added_paths:
+                                    added_paths.add(arc_name)
+                                    zipf.write(original_file_path, arc_name)
+                            
+                            # Journal文件
+                            journal_path = original_file_path + '-journal'
+                            if os.path.exists(journal_path):
+                                arc_name = f"{phone}.session-journal"
+                                if arc_name not in added_paths:
+                                    added_paths.add(arc_name)
+                                    zipf.write(journal_path, arc_name)
+                            
+                            # JSON文件
+                            json_path = os.path.splitext(original_file_path)[0] + '.json'
+                            if os.path.exists(json_path):
+                                arc_name = f"{phone}.json"
+                                if arc_name not in added_paths:
+                                    added_paths.add(arc_name)
+                                    zipf.write(json_path, arc_name)
+                    except Exception as e:
+                        logger.warning(f"⚠️ 打包文件失败 {file_name}: {e}")
+            
+            logger.info(f"✅ 成功账号已打包: {success_zip_path}")
+        except Exception as e:
+            logger.error(f"❌ 打包成功账号失败: {e}")
+            success_zip_path = None
+    
+    # ========================================
+    # 3. 打包失败的账号文件
+    # ========================================
+    failed_zip_path = None
+    if results['failed']:
+        logger.info(f"📦 开始打包失败的账号文件...")
+        failed_zip_path = os.path.join(config.RESULTS_DIR, f"profile_failed_{failed_count}_{timestamp}.zip")
+        
+        try:
+            with zipfile.ZipFile(failed_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                added_paths = set()  # 追踪已添加的文件路径，避免重复
+                
+                for file_path, file_name, detail in results['failed']:
+                    original_file_path = detail.get('file_path', file_path)
+                    # 提取手机号作为前缀
+                    phone = extract_phone_from_path(original_file_path) or extract_phone_from_path(file_name) or file_name.replace('.session', '').replace('.json', '')
+                    
+                    try:
+                        # 判断文件类型
+                        if os.path.isdir(original_file_path):
+                            # TData格式：打包整个目录，使用手机号作为前缀
+                            # 获取目录名（通常是tdata）
+                            tdata_dirname = os.path.basename(original_file_path)
+                            
+                            for root, dirs, files in os.walk(original_file_path):
+                                for file in files:
+                                    file_full_path = os.path.join(root, file)
+                                    rel_path = os.path.relpath(file_full_path, original_file_path)
+                                    # 包含tdata目录名在路径中: 手机号/tdata/D877F783D5D3EF8C/...
+                                    arc_name = f"{phone}/{tdata_dirname}/{rel_path}"
+                                    
+                                    if arc_name not in added_paths:
+                                        added_paths.add(arc_name)
+                                        zipf.write(file_full_path, arc_name)
+                        else:
+                            # Session格式：直接打包到ZIP根目录，使用手机号作为文件名
+                            # 格式：手机号.session 和 手机号.json（不要手机号文件夹）
+                            if os.path.exists(original_file_path):
+                                arc_name = f"{phone}.session"
+                                if arc_name not in added_paths:
+                                    added_paths.add(arc_name)
+                                    zipf.write(original_file_path, arc_name)
+                            
+                            # Journal文件
+                            journal_path = original_file_path + '-journal'
+                            if os.path.exists(journal_path):
+                                arc_name = f"{phone}.session-journal"
+                                if arc_name not in added_paths:
+                                    added_paths.add(arc_name)
+                                    zipf.write(journal_path, arc_name)
+                            
+                            # JSON文件
+                            json_path = os.path.splitext(original_file_path)[0] + '.json'
+                            if os.path.exists(json_path):
+                                arc_name = f"{phone}.json"
+                                if arc_name not in added_paths:
+                                    added_paths.add(arc_name)
+                                    zipf.write(json_path, arc_name)
+                    except Exception as e:
+                        logger.warning(f"⚠️ 打包文件失败 {file_name}: {e}")
+            
+            logger.info(f"✅ 失败账号已打包: {failed_zip_path}")
+        except Exception as e:
+            logger.error(f"❌ 打包失败账号失败: {e}")
+            failed_zip_path = None
+    
+    # ========================================
+    # 4. 发送报告文件
+    # ========================================
+    try:
+        if os.path.exists(report_path):
+            with open(report_path, 'rb') as f:
+                context.bot.send_document(
+                    chat_id=user_id,
+                    document=f,
+                    filename=f"profile_report_{timestamp}.txt",
+                    caption=t(user_id, 'profile_output_report'),
+                    parse_mode='HTML'
+                )
+            logger.info("✅ 报告文件已发送")
+    except Exception as e:
+        logger.error(f"❌ 发送报告文件失败: {e}")
+    
+    # ========================================
+    # 5. 发送成功账号ZIP
+    # ========================================
+    if success_zip_path and os.path.exists(success_zip_path):
+        try:
+            with open(success_zip_path, 'rb') as f:
+                context.bot.send_document(
+                    chat_id=user_id,
+                    document=f,
+                    filename=f"profile_success_{success_count}.zip",
+                    caption=t(user_id, 'profile_output_success').format(count=success_count),
+                    parse_mode='HTML',
+                    timeout=120
+                )
+            logger.info("✅ 成功账号ZIP已发送")
+        except Exception as e:
+            logger.error(f"❌ 发送成功账号ZIP失败: {e}")
+    
+    # ========================================
+    # 6. 发送失败账号ZIP
+    # ========================================
+    if failed_zip_path and os.path.exists(failed_zip_path):
+        try:
+            with open(failed_zip_path, 'rb') as f:
+                context.bot.send_document(
+                    chat_id=user_id,
+                    document=f,
+                    filename=f"profile_failed_{failed_count}.zip",
+                    caption=t(user_id, 'profile_output_failed').format(count=failed_count),
+                    parse_mode='HTML',
+                    timeout=120
+                )
+            logger.info("✅ 失败账号ZIP已发送")
+        except Exception as e:
+            logger.error(f"❌ 发送失败账号ZIP失败: {e}")
+    
+    # ========================================
+    # 7. 更新最终消息
+    # ========================================
+    error_stats_text = ""
+    if error_stats:
+        error_stats_text = f"\n\n<b>{t(user_id, 'profile_error_stats')}</b>\n"
+        for error_name, count in sorted(error_stats.items(), key=lambda x: x[1], reverse=True):
+            error_stats_text += f"• {error_name}: {count}\n"
+    
+    files_sent_text = f"\n\n<b>{t(user_id, 'profile_files_sent')}</b>\n{t(user_id, 'profile_file_report')} profile_report.txt"
+    if success_zip_path:
+        files_sent_text += f"\n{t(user_id, 'profile_file_success')} profile_success_{success_count}.zip"
+    if failed_zip_path:
+        files_sent_text += f"\n{t(user_id, 'profile_file_failed')} profile_failed_{failed_count}.zip"
+    
+    final_text = f"""<b>{t(user_id, 'profile_complete')}</b>
+
+
+    def handle_profile_update_start(self, query):
+    """处理修改资料开始"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    # 检查会员权限
+    if not self.db.is_admin(user_id):
+        is_member, level, expiry = self.db.check_membership(user_id)
+        if not is_member:
+            query.edit_message_text(
+                text=t(user_id, 'profile_need_member'),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(t(user_id, 'btn_vip_menu'), callback_data="vip_menu"),
+                    InlineKeyboardButton(t(user_id, 'btn_back_to_menu'), callback_data="back_to_main")
+                ]]),
+                parse_mode='HTML'
+            )
+            return
+    
+    text = f"""
+
+    def handle_profile_update_callbacks(self, update: Update, context: CallbackContext, query, data: str):
+    """处理修改资料相关回调"""
+    user_id = query.from_user.id
+    
+    if data == "profile_mode_random":
+        self.handle_profile_random_mode(query, user_id)
+    elif data == "profile_mode_custom":
+        self.handle_profile_custom_mode(query, user_id)
+    elif data == "profile_custom_back":
+        # 返回自定义配置菜单
+        if user_id in self.pending_profile_update:
+            config = self.pending_profile_update[user_id]['config']
+            self._show_custom_config_menu(query, user_id, config)
+        else:
+            query.answer(t(user_id, 'profile_session_expired'))
+    elif data.startswith("profile_random_"):
+        self.handle_profile_random_config(update, context, query, data, user_id)
+    elif data.startswith("profile_custom_"):
+        self.handle_profile_custom_config(update, context, query, data, user_id)
+    elif data == "profile_execute":
+        self.handle_profile_update_execute(update, context, query, user_id)
+    elif data == "profile_confirm_execute":
+        self.handle_profile_confirm_execute(update, context, query, user_id)
+    elif data == "profile_cancel":
+        query.answer()
+        if user_id in self.pending_profile_update:
+            self.cleanup_profile_update_task(user_id)
+        self.show_main_menu(update, user_id)
+
+
+    def handle_profile_random_mode(self, query, user_id: int):
+    """处理随机生成模式"""
+    query.answer()
+    
+    # 初始化配置
+    config = ProfileUpdateConfig(mode='random')
+    config.update_name = True
+    config.photo_action = 'keep'
+    config.bio_action = 'keep'
+    config.username_action = 'keep'
+    
+    self.pending_profile_update[user_id] = {
+        'config': config,
+        'status': 'configuring'
+    }
+    
+    self._show_random_config_menu(query, user_id, config)
+
+
+    def handle_profile_random_config(self, update: Update, context: CallbackContext, query, data: str, user_id: int):
+    """处理随机模式配置选项"""
+    query.answer()
+    
+    if user_id not in self.pending_profile_update:
+        query.answer(t(user_id, 'profile_session_expired'))
+        return
+    
+    config = self.pending_profile_update[user_id]['config']
+    
+    if data == "profile_random_photo":
+        # 切换头像选项
+        if config.photo_action == 'keep':
+            config.photo_action = 'delete_all'
+            config.update_photo = True
+        else:
+            config.photo_action = 'keep'
+            config.update_photo = False
+    elif data == "profile_random_bio":
+        # 循环切换简介选项：keep -> clear -> random -> keep
+        if config.bio_action == 'keep':
+            config.bio_action = 'clear'
+            config.update_bio = True
+        elif config.bio_action == 'clear':
+            config.bio_action = 'random'
+            config.update_bio = True
+        else:
+            config.bio_action = 'keep'
+            config.update_bio = False
+    elif data == "profile_random_username":
+        # 循环切换用户名选项：keep -> delete -> random -> keep
+        if config.username_action == 'keep':
+            config.username_action = 'delete'
+            config.update_username = True
+        elif config.username_action == 'delete':
+            config.username_action = 'random'
+            config.update_username = True
+        else:
+            config.username_action = 'keep'
+            config.update_username = False
+    
+    # 刷新菜单
+    self._show_random_config_menu(query, user_id, config)
+
+
+    def handle_profile_custom_mode(self, query, user_id: int):
+    """处理自定义生成模式"""
+    query.answer()
+    
+    # 初始化配置
+    config = ProfileUpdateConfig(mode='custom')
+    config.update_name = False
+    config.update_photo = False
+    config.update_bio = False
+    config.update_username = False
+    
+    self.pending_profile_update[user_id] = {
+        'config': config,
+        'status': 'configuring',
+        'custom_input_field': None  # 当前正在配置的字段
+    }
+    
+    self._show_custom_config_menu(query, user_id, config)
+
+
+    def handle_profile_custom_config(self, update: Update, context: CallbackContext, query, data: str, user_id: int):
+    """处理自定义模式配置选项"""
+    query.answer()
+    
+    if user_id not in self.pending_profile_update:
+        query.answer(t(user_id, 'profile_custom_session_expired'))
+        return
+    
+    config = self.pending_profile_update[user_id]['config']
+    task = self.pending_profile_update[user_id]
+    
+    if data == "profile_custom_name":
+        # 配置姓名
+        self._show_custom_field_config(query, user_id, 'name', t(user_id, 'profile_field_name'))
+    elif data == "profile_custom_photo":
+        # 配置头像
+        self._show_custom_field_config(query, user_id, 'photo', t(user_id, 'profile_field_avatar'))
+    elif data == "profile_custom_bio":
+        # 配置简介
+        self._show_custom_field_config(query, user_id, 'bio', t(user_id, 'profile_field_bio'))
+    elif data == "profile_custom_username":
+        # 配置用户名
+        self._show_custom_field_config(query, user_id, 'username', t(user_id, 'profile_field_username'))
+    elif data.startswith("profile_custom_field_"):
+        # 处理字段配置选项
+        self._handle_custom_field_action(update, context, query, data, user_id)
+
+
+    def handle_profile_custom_text_input(self, update: Update, context: CallbackContext, user_id: int, field_name: str, text: str):
+    """处理自定义资料的文本输入"""
+    if user_id not in self.pending_profile_update:
+        self.safe_send_message(update, t(user_id, 'profile_custom_session_expired_restart'), 'HTML')
+        return
+    
+    config = self.pending_profile_update[user_id]['config']
+    
+    # 解析输入的文本（按行分割）
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    
+    if not lines:
+        self.safe_send_message(update, t(user_id, 'profile_custom_input_empty'), 'HTML')
+        return
+    
+    # Helper function to get translated field display name
+    def get_field_display(field):
+        field_map = {
+            'name': 'profile_field_name',
+            'bio': 'profile_field_bio',
+            'username': 'profile_field_username'
+        }
+        return t(user_id, field_map.get(field, 'profile_field_name'))
+    
+    field_display = get_field_display(field_name)
+    
+    if field_name == 'name':
+        config.custom_names = lines
+        config.update_name = True
+    elif field_name == 'bio':
+        config.custom_bios = lines
+        config.update_bio = True
+        config.bio_action = 'custom'
+    elif field_name == 'username':
+        config.custom_usernames = lines
+        config.update_username = True
+        config.username_action = 'custom'
+    
+    # 清除用户状态
+    self.db.save_user(user_id, "", "", "profile_custom_config")
+    
+    # 发送确认消息和返回按钮
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton(t(user_id, 'profile_custom_field_back_to_menu'), callback_data="profile_custom_back")
+    ]])
+    
+    self.safe_send_message(
+        update,
+        t(user_id, 'profile_custom_configured').format(count=len(lines), field=field_display),
+        'HTML',
+        reply_markup=keyboard
+    )
+
+
+    def _create_avatar_upload_dir(self, user_id: int) -> str:
+    """创建头像上传目录并返回路径"""
+    upload_dir = os.path.join(config.UPLOADS_DIR, f"avatars_{user_id}_{int(time.time())}")
+    os.makedirs(upload_dir, exist_ok=True)
+    return upload_dir
+
+
+    def handle_profile_photo_upload(self, update: Update, context: CallbackContext, user_id: int):
+    """处理资料头像的单张图片上传"""
+    if user_id not in self.pending_profile_update:
+        self.safe_send_message(update, t(user_id, 'profile_custom_session_expired_restart'), 'HTML')
+        return
+    
+    config = self.pending_profile_update[user_id]['config']
+    
+    progress_msg = self.safe_send_message(update, t(user_id, 'profile_photo_processing'), 'HTML')
+    if not progress_msg:
+        return
+    
+    try:
+        # 获取最大尺寸的图片
+        photo = update.message.photo[-1]
+        
+        # 创建上传目录
+        upload_dir = self._create_avatar_upload_dir(user_id)
+        
+        # 下载图片
+        file = photo.get_file()
+        file_path = os.path.join(upload_dir, f"avatar_{user_id}.jpg")
+        file.download(file_path)
+        
+        # 保存到配置
+        config.custom_photos = [file_path]
+        config.update_photo = True
+        config.photo_action = 'custom'
+        
+        # 清除用户状态
+        self.db.save_user(user_id, "", "", "profile_custom_config")
+        
+        # 显示确认消息
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton(t(user_id, 'profile_custom_field_back_to_menu'), callback_data="profile_custom_back")
+        ]])
+        
+        self.safe_edit_message_text(
+            progress_msg,
+            t(user_id, 'profile_photo_uploaded_success'),
+            reply_markup=keyboard,
+            parse_mode='HTML'
+        )
+        
+    except Exception as e:
+        logger.error(f"处理资料头像上传失败: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        self.safe_edit_message_text(
+            progress_msg,
+            t(user_id, 'profile_photo_upload_failed').format(error=str(e)),
+            parse_mode='HTML'
+        )
+
+
+    def handle_profile_custom_file_upload(self, update: Update, context: CallbackContext, user_id: int, field_name: str, document):
+    """处理自定义资料的文件上传"""
+    if user_id not in self.pending_profile_update:
+        self.safe_send_message(update, t(user_id, 'profile_custom_session_expired_restart'), 'HTML')
+        return
+    
+    config = self.pending_profile_update[user_id]['config']
+    
+    progress_msg = self.safe_send_message(update, t(user_id, 'processing_your_file'), 'HTML')
+    if not progress_msg:
+        return
+    
+    try:
+        # 创建临时目录
+        temp_dir = tempfile.mkdtemp(prefix=f"profile_custom_{field_name}_")
+        temp_file = os.path.join(temp_dir, document.file_name)
+        
+        # 下载文件
+        document.get_file().download(temp_file)
+        
+        # Helper function to get translated field display name
+        def get_field_display(field):
+            field_map = {
+                'name': 'profile_field_name',
+                'photo': 'profile_field_avatar',
+                'bio': 'profile_field_bio',
+                'username': 'profile_field_username'
+            }
+            return t(user_id, field_map.get(field, 'profile_field_name'))
+        
+        field_display = get_field_display(field_name)
+        
+        if field_name == 'photo':
+            # 处理图片文件
+            items = []
+            
+            # 检查是否是图片文件
+            if temp_file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
+                # 单个图片文件
+                upload_dir = self._create_avatar_upload_dir(user_id)
+                dest_path = os.path.join(upload_dir, document.file_name)
+                shutil.copy(temp_file, dest_path)
+                items.append(dest_path)
+                
+            elif temp_file.lower().endswith('.zip'):
+                # ZIP文件，解压并提取图片
+                extract_dir = os.path.join(temp_dir, "extracted")
+                os.makedirs(extract_dir, exist_ok=True)
+                
+                with zipfile.ZipFile(temp_file, 'r') as zip_ref:
+                    zip_ref.extractall(extract_dir)
+                
+                # 查找所有图片文件
+                upload_dir = self._create_avatar_upload_dir(user_id)
+                for root, dirs, files in os.walk(extract_dir):
+                    for file in files:
+                        if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
+                            file_path = os.path.join(root, file)
+                            dest_path = os.path.join(upload_dir, file)
+                            shutil.copy(file_path, dest_path)
+                            items.append(dest_path)
+            
+            if not items:
+                self.safe_edit_message_text(
+                    progress_msg,
+                    t(user_id, 'profile_custom_no_images'),
+                    parse_mode='HTML'
+                )
+                return
+            
+            config.custom_photos = items
+            config.update_photo = True
+            config.photo_action = 'custom'
+            
+        else:
+            # 处理文本文件（姓名、简介、用户名）
+            # 验证是否为 .txt 文件
+            if not temp_file.lower().endswith('.txt'):
+                self.safe_edit_message_text(
+                    progress_msg,
+                    f"❌ <b>文件格式错误</b>\n\n请上传 .txt 文本文件，当前文件: {document.file_name}",
+                    parse_mode='HTML'
+                )
+                return
+            
+            try:
+                with open(temp_file, 'r', encoding='utf-8') as f:
+                    lines = [line.strip() for line in f if line.strip()]
+            except UnicodeDecodeError:
+                # 尝试其他编码
+                try:
+                    with open(temp_file, 'r', encoding='gbk') as f:
+                        lines = [line.strip() for line in f if line.strip()]
+                except:
+                    self.safe_edit_message_text(
+                        progress_msg,
+                        t(user_id, 'profile_custom_encoding_error'),
+                        parse_mode='HTML'
+                    )
+                    return
+            
+            if not lines:
+                self.safe_edit_message_text(
+                    progress_msg,
+                    t(user_id, 'profile_custom_file_empty'),
+                    parse_mode='HTML'
+                )
+                return
+            
+            # 根据字段类型保存
+            if field_name == 'name':
+                config.custom_names = lines
+                config.update_name = True
+            elif field_name == 'bio':
+                config.custom_bios = lines
+                config.update_bio = True
+                config.bio_action = 'custom'
+            elif field_name == 'username':
+                config.custom_usernames = lines
+                config.update_username = True
+                config.username_action = 'custom'
+            
+            items = lines
+        
+        # 清除用户状态
+        self.db.save_user(user_id, "", "", "profile_custom_config")
+        
+        # 显示确认消息
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton(t(user_id, 'profile_custom_field_back_to_menu'), callback_data="profile_custom_back")
+        ]])
+        
+        self.safe_edit_message_text(
+            progress_msg,
+            t(user_id, 'profile_custom_configured').format(count=len(items), field=field_display),
+            reply_markup=keyboard,
+            parse_mode='HTML'
+        )
+        
+    except Exception as e:
+        logger.error(f"处理自定义资料文件上传失败: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        self.safe_edit_message_text(
+            progress_msg,
+            t(user_id, 'profile_custom_processing_failed').format(error=str(e)),
+            parse_mode='HTML'
+        )
+    finally:
+        # 清理临时文件
+        if temp_dir and os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+    def handle_profile_confirm_execute(self, update: Update, context: CallbackContext, query, user_id: int):
+    """处理确认执行资料修改"""
+    query.answer()
+    
+    if user_id not in self.pending_profile_update:
+        self.safe_edit_message(query, t(user_id, 'profile_custom_task_expired'))
+        return
+    
+    task = self.pending_profile_update[user_id]
+    
+    # 检查是否有文件信息
+    if 'files' not in task or 'file_type' not in task or 'progress_msg' not in task:
+        self.safe_edit_message(query, "❌ 任务信息不完整，请重新上传文件")
+        return
+    
+    files = task['files']
+    file_type = task['file_type']
+    config = task['config']
+    progress_msg = task['progress_msg']
+    
+    # 开始执行（使用线程运行异步任务，避免事件循环错误）
+    def execute_profile_update():
+        try:
+            asyncio.run(self._execute_profile_update(user_id, files, file_type, config, context, progress_msg))
+        except asyncio.CancelledError:
+            logger.info(f"[profile_update] 任务被取消")
+        except Exception as e:
+            logger.error(f"[profile_update] 处理异常: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    thread = threading.Thread(target=execute_profile_update, daemon=True)
+    thread.start()
+
+
+    def handle_profile_update_execute(self, update: Update, context: CallbackContext, query, user_id: int):
+    """开始执行资料修改"""
+    query.answer()
+    
+    if user_id not in self.pending_profile_update:
+        self.safe_edit_message(query, t(user_id, 'profile_session_expired'))
+        return
+    
+    task = self.pending_profile_update[user_id]
+    config = task['config']
+    
+    text = f"""
+
+
+
+# ===== Handler Methods =====
+
+    def get_zip_name_translation_key(self, status: str) -> str:
+    """Map internal status to ZIP file name translation key
+    
+    Args:
+        status: Internal status name (Chinese)
+        
+    Returns:
+        Translation key for ZIP file naming
+    """
+    zip_map = {
+        "无限制": "zip_no_restriction",
+        "垃圾邮件": "zip_spambot",
+        "冻结": "zip_frozen",
+        "封禁": "zip_banned",
+        "连接错误": "zip_connection_error",
+    }
+    return zip_map.get(status, "zip_no_restriction")
+
+
+    def sanitize_filename(self, filename: str) -> str:
+    """清理文件名，保留 Emoji 和括号
+    
+    只移除文件系统不允许的字符，保留所有Unicode字符包括Emoji。
+    
+    移除的字符（Windows和Unix文件系统不允许）:
+    - 反斜杠 (\)、正斜杠 (/)、冒号 (:)
+    - 星号 (*)、问号 (?)、引号 (")
+    - 小于号 (<)、大于号 (>)、竖线 (|)
+    
+    保留的字符:
+    - Emoji (如 🇮🇳, 🎉)
+    - 中文括号 （）
+    - 所有Unicode字符（中文、日文、俄文等）
+    - 加号 (+)、下划线 (_)、连字符 (-) 等
+    
+    示例:
+    - '🇮🇳 随机混合国家（有密码）' -> '🇮🇳 随机混合国家（有密码）'
+    - 'test/file:name' -> 'testfilename'
+    """
+    # 只移除文件系统不允许的字符
+    # Windows和Unix都不允许这些字符: \ / : * ? " < > |
+    invalid_chars = r'[\\/:*?"<>|]'
+    filename = re.sub(invalid_chars, '', filename)
+    
+    # 限制长度（保留扩展名空间）
+    max_length = 200
+    if len(filename) > max_length:
+        filename = filename[:max_length]
+    
+    # 去除首尾空格和点号
+    filename = filename.strip('. ')
+    
+    # 如果文件名为空，使用默认名
+    if not filename:
+        filename = 'unnamed_file'
+    
+    return filename
+
+
+    def handle_photo(self, update: Update, context: CallbackContext):
+    """处理图片上传（用于广播媒体和资料头像）"""
+    user_id = update.effective_user.id
+    
+    # 检查用户状态
+    try:
+        conn = sqlite3.connect(config.DB_NAME)
+        c = conn.cursor()
+        c.execute("SELECT status FROM users WHERE user_id = ?", (user_id,))
+        row = c.fetchone()
+        conn.close()
+        
+        if not row:
+            return
+        
+        user_status = row[0]
+        
+        # 处理资料头像上传
+        if user_status == "profile_custom_upload_photo":
+            self.handle_profile_photo_upload(update, context, user_id)
+            return
+        
+        # 处理广播媒体上传
+        if user_status != "waiting_broadcast_media":
+            # 不是在等待上传，忽略
+            return
+    except:
+        return
+    
+    # 检查是否有待处理的广播任务
+    if user_id not in self.pending_broadcasts:
+        self.safe_send_message(update, "❌ 没有待处理的广播任务")
+        return
+    
+    task = self.pending_broadcasts[user_id]
+    
+    # 获取最大尺寸的图片
+    photo = update.message.photo[-1]
+    
+    # 保存图片 file_id
+    task['media_file_id'] = photo.file_id
+    task['media_type'] = 'photo'
+    
+    # 清空用户状态
+    self.db.save_user(user_id, "", "", "")
+    
+    # 发送成功消息并返回编辑器
+    self.safe_send_message(
+        update,
+        "✅ <b>图片已保存</b>\n\n返回编辑器继续设置",
+        'HTML'
+    )
+    
+    # 模拟 query 对象返回编辑器
+    class FakeQuery:
+        def __init__(self, user, chat):
+            self.from_user = user
+            self.message = type('obj', (object,), {'chat_id': chat.id, 'message_id': None})()
+        def answer(self):
+            pass
+    
+    fake_query = FakeQuery(update.effective_user, update.effective_chat)
+    
+    # 发送新消息显示编辑器
+    self.show_broadcast_wizard_editor_as_new_message(update, context)
+
+
+    def handle_rename_start(self, query):
+    """开始文件重命名流程"""
+    user_id = query.from_user.id
+    query.answer()
+    
+    # 初始化任务
+    self.pending_rename[user_id] = {
+        'temp_dir': None,
+        'file_path': None,
+        'orig_name': None,
+        'ext': None
+    }
+    
+    # 设置用户状态
+    self.db.save_user(
+        user_id,
+        query.from_user.username or "",
+        query.from_user.first_name or "",
+        "waiting_rename_file"
+    )
+    
+    text = f"""
+
+    def handle_rename_file_upload(self, update: Update, context: CallbackContext, document):
+    """处理重命名文件上传"""
+    user_id = update.effective_user.id
+    
+    if user_id not in self.pending_rename:
+        self.safe_send_message(update, t(user_id, 'rename_no_task'))
+        return
+    
+    # 创建临时目录
+    temp_dir = tempfile.mkdtemp(prefix="temp_rename_")
+    orig_name = document.file_name
+    
+    # 分离文件名和扩展名
+    if '.' in orig_name:
+        name_parts = orig_name.rsplit('.', 1)
+        base_name = name_parts[0]
+        ext = '.' + name_parts[1]
+    else:
+        base_name = orig_name
+        ext = ''
+    
+    # 下载文件
+    file_path = os.path.join(temp_dir, orig_name)
+    try:
+        document.get_file().download(file_path)
+    except Exception as e:
+        self.safe_send_message(update, t(user_id, 'rename_download_failed').format(error=str(e)))
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return
+    
+    # 保存任务信息
+    self.pending_rename[user_id]['temp_dir'] = temp_dir
+    self.pending_rename[user_id]['file_path'] = file_path
+    self.pending_rename[user_id]['orig_name'] = orig_name
+    self.pending_rename[user_id]['ext'] = ext
+    
+    # 更新状态，等待新文件名
+    self.db.save_user(
+        user_id,
+        update.effective_user.username or "",
+        update.effective_user.first_name or "",
+        "waiting_rename_newname"
+    )
+    
+    text = f"""
+
+    def handle_rename_newname_input(self, update: Update, context: CallbackContext, user_id: int, text: str):
+    """处理新文件名输入"""
+    if user_id not in self.pending_rename:
+        self.safe_send_message(update, t(user_id, 'rename_no_task'))
+        return
+    
+    task = self.pending_rename[user_id]
+    
+    # 调试日志：记录原始输入
+    logger.debug(f"重命名输入 - 用户{user_id} - 原始文本: {repr(text)}")
+    logger.debug(f"重命名输入 - 用户{user_id} - text.strip(): {repr(text.strip())}")
+    
+    # 清理并验证新文件名
+    new_name = self.sanitize_filename(text.strip())
+    logger.debug(f"重命名输入 - 用户{user_id} - 清理后: {repr(new_name)}")
+    
+    if not new_name:
+        self.safe_send_message(update, t(user_id, 'rename_invalid_name'))
+        return
+    
+    # 构建完整的新文件名
+    new_filename = new_name + task['ext']
+    new_file_path = os.path.join(task['temp_dir'], new_filename)
+    
+    # 重命名文件
+    try:
+        shutil.move(task['file_path'], new_file_path)
+    except Exception as e:
+        self.safe_send_message(update, t(user_id, 'rename_failed').format(error=str(e)))
+        self.cleanup_rename_task(user_id)
+        return
+    
+    # 发送重命名后的文件
+    # 注意：显式指定filename参数以确保Telegram使用正确的文件名
+    old_name_html = f"<code>{task['orig_name']}</code>"
+    new_name_html = f"<code>{new_filename}</code>"
+    caption = (
+        f"<b>{t(user_id, 'rename_success')}</b>\n\n"
+        f"{t(user_id, 'rename_old_name').format(old_name=old_name_html)}\n"
+        f"{t(user_id, 'rename_new_name').format(new_name=new_name_html)}\n\n"
+        f"{t(user_id, 'rename_telegram_tip')}"
+    )
+    
+    if self.send_document_safely(user_id, new_file_path, caption, new_filename):
+        self.safe_send_message(update, f"<b>{t(user_id, 'rename_file_sent')}</b>", 'HTML')
+    else:
+        self.safe_send_message(update, t(user_id, 'rename_send_failed'))
+    
+    # 清理任务
+    self.cleanup_rename_task(user_id)
+
+
+    def _ask_for_group_names(self, update: Update, user_id: int):
+    """询问群组名称和简介"""
+    task = self.pending_batch_create[user_id]
+    
+    total_to_create = task['valid_accounts'] * task['count_per_account']
+    
+    admin_usernames = task.get('admin_usernames', [])
+    admin_display = ', '.join([f"@{u}" for u in admin_usernames]) if admin_usernames else t(user_id, 'batch_create_admins_none')
+    
+    step3_title_key = 'batch_create_step3_title_group' if task['creation_type'] == 'group' else 'batch_create_step3_title_channel'
+    step3_prompt_key = 'batch_create_step3_prompt' if task['creation_type'] == 'group' else 'batch_create_step3_prompt_channel'
+    step3_format_key = 'batch_create_step3_format_group' if task['creation_type'] == 'group' else 'batch_create_step3_format_channel'
+    
+    text = f"""
+
+    def handle_batch_create_names_input(self, update: Update, context: CallbackContext, user_id: int, text: str):
+    """处理群组名称和简介输入"""
+    if user_id not in self.pending_batch_create:
+        self.safe_send_message(update, "❌ 会话已过期，请重新开始")
+        return
+    
+    task = self.pending_batch_create[user_id]
+    
+    try:
+        lines = text.strip().split('\n')
+        group_names = []
+        group_descriptions = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            if '|' in line:
+                parts = line.split('|', 1)
+                name = parts[0].strip()
+                desc = parts[1].strip() if len(parts) > 1 else ""
+            else:
+                name = line
+                desc = ""
+            
+            if name:
+                group_names.append(name)
+                group_descriptions.append(desc)
+        
+        if not group_names:
+            self.safe_send_message(update, "❌ 未找到有效的名称，请重新输入")
+            return
+        
+        task['group_names'] = group_names
+        task['group_descriptions'] = group_descriptions
+        
+        names_saved_key = 'batch_create_names_saved_group' if task['creation_type'] == 'group' else 'batch_create_names_saved_channel'
+        step4_title_key = 'batch_create_step4_title_group' if task['creation_type'] == 'group' else 'batch_create_step4_title_channel'
+        
+        text = f"""
+
+    def handle_batch_create_usernames_input(self, update: Update, context: CallbackContext, user_id: int, text: str):
+    """处理自定义用户名输入"""
+    if user_id not in self.pending_batch_create:
+        self.safe_send_message(update, "❌ 会话已过期，请重新开始")
+        return
+    
+    task = self.pending_batch_create[user_id]
+    
+    try:
+        lines = text.strip().split('\n')
+        custom_usernames = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # 移除 @ 前缀
+            username = line.lstrip('@')
+            if username:
+                custom_usernames.append(username)
+        
+        if not custom_usernames:
+            self.safe_send_message(update, "❌ 未找到有效的用户名，请重新输入")
+            return
+        
+        task['custom_usernames'] = custom_usernames
+        
+        # 显示确认信息
+        self._show_batch_create_confirm(update, user_id)
+        
+    except Exception as e:
+        self.safe_send_message(update, f"❌ 解析失败：{str(e)}")
+
+
+    def process_batch_create_names_file(self, update: Update, context: CallbackContext, document, user_id: int):
+    """处理群组名称文件上传"""
+    if user_id not in self.pending_batch_create:
+        self.safe_send_message(update, "❌ 会话已过期，请重新开始")
+        return
+    
+    try:
+        # 下载文件
+        file = document.get_file()
+        temp_file = tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.txt', encoding='utf-8')
+        file.download(temp_file.name)
+        temp_file.close()
+        
+        # 读取文件内容
+        with open(temp_file.name, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # 清理临时文件
+        os.unlink(temp_file.name)
+        
+        # 使用现有的处理逻辑
+        fake_update = self._create_fake_update(user_id)
+        self.handle_batch_create_names_input(fake_update, context, user_id, content)
+        
+    except Exception as e:
+        logger.error(f"处理名称文件失败: {e}")
+        self.safe_send_message(update, f"❌ 文件处理失败：{str(e)}")
+
+
+    def process_batch_create_usernames_file(self, update: Update, context: CallbackContext, document, user_id: int):
+    """处理用户名文件上传"""
+    if user_id not in self.pending_batch_create:
+        self.safe_send_message(update, "❌ 会话已过期，请重新开始")
+        return
+    
+    try:
+        # 下载文件
+        file = document.get_file()
+        temp_file = tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.txt', encoding='utf-8')
+        file.download(temp_file.name)
+        temp_file.close()
+        
+        # 读取文件内容
+        with open(temp_file.name, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # 清理临时文件
+        os.unlink(temp_file.name)
+        
+        # 使用现有的处理逻辑
+        fake_update = self._create_fake_update(user_id)
+        self.handle_batch_create_usernames_input(fake_update, context, user_id, content)
+        
+    except Exception as e:
+        logger.error(f"处理用户名文件失败: {e}")
+        self.safe_send_message(update, f"❌ 文件处理失败：{str(e)}")
+
+
+
+
+    def _generate_profile_update_report(self, context: CallbackContext, user_id: int, results: Dict, progress_msg):
+    """生成资料修改详细报告和打包结果文件"""
+    logger.info("📊 开始生成详细报告和打包文件...")
+    
+    timestamp = datetime.now(BEIJING_TZ).strftime("%Y%m%d_%H%M%S")
+    total = len(results['success']) + len(results['failed'])
+    success_count = len(results['success'])
+    failed_count = len(results['failed'])
+    
+    # 统计错误类型
+    error_stats = {}
+    for file_path, file_name, detail in results['failed']:
+        error_type = detail.get('error_type', 'Unknown')
+        # 获取友好的错误名称
+        if error_type in ERROR_TYPE_TO_TRANSLATION_KEY:
+            error_name = get_profile_error_message(user_id, error_type)
+        else:
+            error_name = error_type
+        
+        if error_name not in error_stats:
+            error_stats[error_name] = 0
+        error_stats[error_name] += 1
+    
+    # ========================================
+    # 1. 生成详细的TXT报告
+    # ========================================
+    report_lines = []
+    
+    report_lines.append("=" * 80)
+    report_lines.append(t(user_id, 'profile_report_title'))
+    report_lines.append("=" * 80)
+    report_lines.append(f"{t(user_id, 'profile_report_time')} {datetime.now(BEIJING_TZ).strftime('%Y-%m-%d %H:%M:%S')}")
+    report_lines.append(t(user_id, 'profile_report_summary').format(total=total, success=success_count, failed=failed_count))
+    report_lines.append("")
+    
+    # 成功的账号详情
+    if results['success']:
+        report_lines.append("=" * 80)
+        report_lines.append(t(user_id, 'profile_report_success_title').format(count=success_count))
+        report_lines.append("=" * 80)
+        for idx, (file_path, file_name, detail) in enumerate(results['success'], 1):
+            report_lines.append(f"\n{idx}. {detail.get('phone', file_name)}")
+            report_lines.append(f"   {t(user_id, 'profile_report_file')} {file_name}")
+            
+            # 显示变更详情 - 使用"修改前xxx 修改后xxx"格式
+            changes = detail.get('changes', {})
+            
+            # 姓名修改
+            if 'name' in changes and changes['name'].get('success'):
+                old_name = changes['name'].get('old', '').strip()
+                new_name = changes['name'].get('new', '').strip()
+                if old_name and new_name:
+                    report_lines.append(f"   {t(user_id, 'profile_report_name_change').format(before=old_name, after=new_name)}")
+                elif new_name:
+                    report_lines.append(f"   - {t(user_id, 'profile_config_name')} {t(user_id, 'profile_report_name_change').format(before='', after=new_name)}")
+            
+            # 头像修改
+            if 'photo' in changes and changes['photo'].get('success'):
+                action = changes['photo'].get('action', 'deleted')
+                if action == 'deleted':
+                    report_lines.append(f"   {t(user_id, 'profile_report_avatar_deleted')}")
+                elif action == 'uploaded':
+                    report_lines.append(f"   {t(user_id, 'profile_report_avatar_uploaded')}")
+            
+            # 简介修改
+            if 'bio' in changes and changes['bio'].get('success'):
+                old_bio = changes['bio'].get('old', '').strip()
+                new_bio = changes['bio'].get('new', '').strip()
+                if old_bio and new_bio:
+                    # 限制显示长度，避免报告太长
+                    old_bio_display = old_bio[:30] + '...' if len(old_bio) > 30 else old_bio
+                    new_bio_display = new_bio[:30] + '...' if len(new_bio) > 30 else new_bio
+                    report_lines.append(f"   {t(user_id, 'profile_report_bio_change').format(before=old_bio_display, after=new_bio_display)}")
+                elif new_bio:
+                    new_bio_display = new_bio[:30] + '...' if len(new_bio) > 30 else new_bio
+                    report_lines.append(f"   {t(user_id, 'profile_report_bio_change').format(before=t(user_id, 'profile_none'), after=new_bio_display)}")
+                elif old_bio:
+                    old_bio_display = old_bio[:30] + '...' if len(old_bio) > 30 else old_bio
+                    report_lines.append(f"   {t(user_id, 'profile_report_bio_change').format(before=old_bio_display, after=t(user_id, 'profile_bio_cleared_inline'))}")
+                else:
+                    report_lines.append(f"   {t(user_id, 'profile_report_bio_cleared')}")
+            
+            # 用户名修改
+            if 'username' in changes and changes['username'].get('success'):
+                old_username = changes['username'].get('old', '').strip()
+                new_username = changes['username'].get('new', '').strip()
+                
+                # 格式化用户名显示
+                if old_username and old_username != '无':
+                    old_display = old_username if old_username.startswith('@') else f"@{old_username}"
+                else:
+                    old_display = "(无)"
+                
+                if new_username and new_username != '已删除':
+                    new_display = new_username if new_username.startswith('@') else f"@{new_username}"
+                else:
+                    new_display = "(已删除)"
+                
+                report_lines.append(f"   {t(user_id, 'profile_report_username_change').format(before=old_display, after=new_display)}")
+        
+        report_lines.append("")
+    
+    # 失败的账号详情
+    if results['failed']:
+        report_lines.append("=" * 80)
+        report_lines.append(t(user_id, 'profile_report_failed_title').format(count=failed_count))
+        report_lines.append("=" * 80)
+        for idx, (file_path, file_name, detail) in enumerate(results['failed'], 1):
+            report_lines.append(f"\n{idx}. {detail.get('phone', file_name) if detail.get('phone') else file_name}")
+            report_lines.append(f"   {t(user_id, 'profile_report_file')} {file_name}")
+            error_type = detail.get('error_type', 'Unknown')
+            error_message = detail.get('error', t(user_id, 'profile_error_unknown'))
+            report_lines.append(f"   {t(user_id, 'profile_report_error_type')} {error_type}")
+            report_lines.append(f"   {t(user_id, 'profile_report_error_reason')} {error_message}")
+        
+        report_lines.append("")
+    
+    # 错误统计
+    if error_stats:
+        report_lines.append("=" * 80)
+        report_lines.append(t(user_id, 'profile_report_error_stats'))
+        report_lines.append("=" * 80)
+        for error_name, count in sorted(error_stats.items(), key=lambda x: x[1], reverse=True):
+            report_lines.append(f"• {error_name}: {count}")
+        report_lines.append("")
+    
+    # 保存报告文件
+    report_content = "\n".join(report_lines)
+    report_path = os.path.join(config.RESULTS_DIR, f"profile_report_{timestamp}.txt")
+    
+    try:
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write(report_content)
+        logger.info(f"✅ 报告文件已生成: {report_path}")
+    except Exception as e:
+        logger.error(f"❌ 生成报告文件失败: {e}")
+    
+    # ========================================
+    # 2. 打包成功的账号文件
+    # ========================================
+    success_zip_path = None
+    if results['success']:
+        logger.info(f"📦 开始打包成功的账号文件...")
+        success_zip_path = os.path.join(config.RESULTS_DIR, f"profile_success_{success_count}_{timestamp}.zip")
+        
+        try:
+            with zipfile.ZipFile(success_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                added_paths = set()  # 追踪已添加的文件路径，避免重复
+                
+                for file_path, file_name, detail in results['success']:
+                    original_file_path = detail.get('file_path', file_path)
+                    # 提取手机号作为前缀
+                    phone = extract_phone_from_path(original_file_path) or extract_phone_from_path(file_name) or file_name.replace('.session', '').replace('.json', '')
+                    
+                    try:
+                        # 判断文件类型
+                        if os.path.isdir(original_file_path):
+                            # TData格式：打包整个目录，使用手机号作为前缀
+                            # 获取目录名（通常是tdata）
+                            tdata_dirname = os.path.basename(original_file_path)
+                            
+                            for root, dirs, files in os.walk(original_file_path):
+                                for file in files:
+                                    file_full_path = os.path.join(root, file)
+                                    rel_path = os.path.relpath(file_full_path, original_file_path)
+                                    # 包含tdata目录名在路径中: 手机号/tdata/D877F783D5D3EF8C/...
+                                    arc_name = f"{phone}/{tdata_dirname}/{rel_path}"
+                                    
+                                    if arc_name not in added_paths:
+                                        added_paths.add(arc_name)
+                                        zipf.write(file_full_path, arc_name)
+                        else:
+                            # Session格式：直接打包到ZIP根目录，使用手机号作为文件名
+                            # 格式：手机号.session 和 手机号.json（不要手机号文件夹）
+                            if os.path.exists(original_file_path):
+                                arc_name = f"{phone}.session"
+                                if arc_name not in added_paths:
+                                    added_paths.add(arc_name)
+                                    zipf.write(original_file_path, arc_name)
+                            
+                            # Journal文件
+                            journal_path = original_file_path + '-journal'
+                            if os.path.exists(journal_path):
+                                arc_name = f"{phone}.session-journal"
+                                if arc_name not in added_paths:
+                                    added_paths.add(arc_name)
+                                    zipf.write(journal_path, arc_name)
+                            
+                            # JSON文件
+                            json_path = os.path.splitext(original_file_path)[0] + '.json'
+                            if os.path.exists(json_path):
+                                arc_name = f"{phone}.json"
+                                if arc_name not in added_paths:
+                                    added_paths.add(arc_name)
+                                    zipf.write(json_path, arc_name)
+                    except Exception as e:
+                        logger.warning(f"⚠️ 打包文件失败 {file_name}: {e}")
+            
+            logger.info(f"✅ 成功账号已打包: {success_zip_path}")
+        except Exception as e:
+            logger.error(f"❌ 打包成功账号失败: {e}")
+            success_zip_path = None
+    
+    # ========================================
+    # 3. 打包失败的账号文件
+    # ========================================
+    failed_zip_path = None
+    if results['failed']:
+        logger.info(f"📦 开始打包失败的账号文件...")
+        failed_zip_path = os.path.join(config.RESULTS_DIR, f"profile_failed_{failed_count}_{timestamp}.zip")
+        
+        try:
+            with zipfile.ZipFile(failed_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                added_paths = set()  # 追踪已添加的文件路径，避免重复
+                
+                for file_path, file_name, detail in results['failed']:
+                    original_file_path = detail.get('file_path', file_path)
+                    # 提取手机号作为前缀
+                    phone = extract_phone_from_path(original_file_path) or extract_phone_from_path(file_name) or file_name.replace('.session', '').replace('.json', '')
+                    
+                    try:
+                        # 判断文件类型
+                        if os.path.isdir(original_file_path):
+                            # TData格式：打包整个目录，使用手机号作为前缀
+                            # 获取目录名（通常是tdata）
+                            tdata_dirname = os.path.basename(original_file_path)
+                            
+                            for root, dirs, files in os.walk(original_file_path):
+                                for file in files:
+                                    file_full_path = os.path.join(root, file)
+                                    rel_path = os.path.relpath(file_full_path, original_file_path)
+                                    # 包含tdata目录名在路径中: 手机号/tdata/D877F783D5D3EF8C/...
+                                    arc_name = f"{phone}/{tdata_dirname}/{rel_path}"
+                                    
+                                    if arc_name not in added_paths:
+                                        added_paths.add(arc_name)
+                                        zipf.write(file_full_path, arc_name)
+                        else:
+                            # Session格式：直接打包到ZIP根目录，使用手机号作为文件名
+                            # 格式：手机号.session 和 手机号.json（不要手机号文件夹）
+                            if os.path.exists(original_file_path):
+                                arc_name = f"{phone}.session"
+                                if arc_name not in added_paths:
+                                    added_paths.add(arc_name)
+                                    zipf.write(original_file_path, arc_name)
+                            
+                            # Journal文件
+                            journal_path = original_file_path + '-journal'
+                            if os.path.exists(journal_path):
+                                arc_name = f"{phone}.session-journal"
+                                if arc_name not in added_paths:
+                                    added_paths.add(arc_name)
+                                    zipf.write(journal_path, arc_name)
+                            
+                            # JSON文件
+                            json_path = os.path.splitext(original_file_path)[0] + '.json'
+                            if os.path.exists(json_path):
+                                arc_name = f"{phone}.json"
+                                if arc_name not in added_paths:
+                                    added_paths.add(arc_name)
+                                    zipf.write(json_path, arc_name)
+                    except Exception as e:
+                        logger.warning(f"⚠️ 打包文件失败 {file_name}: {e}")
+            
+            logger.info(f"✅ 失败账号已打包: {failed_zip_path}")
+        except Exception as e:
+            logger.error(f"❌ 打包失败账号失败: {e}")
+            failed_zip_path = None
+    
+    # ========================================
+    # 4. 发送报告文件
+    # ========================================
+    try:
+        if os.path.exists(report_path):
+            with open(report_path, 'rb') as f:
+                context.bot.send_document(
+                    chat_id=user_id,
+                    document=f,
+                    filename=f"profile_report_{timestamp}.txt",
+                    caption=t(user_id, 'profile_output_report'),
+                    parse_mode='HTML'
+                )
+            logger.info("✅ 报告文件已发送")
+    except Exception as e:
+        logger.error(f"❌ 发送报告文件失败: {e}")
+    
+    # ========================================
+    # 5. 发送成功账号ZIP
+    # ========================================
+    if success_zip_path and os.path.exists(success_zip_path):
+        try:
+            with open(success_zip_path, 'rb') as f:
+                context.bot.send_document(
+                    chat_id=user_id,
+                    document=f,
+                    filename=f"profile_success_{success_count}.zip",
+                    caption=t(user_id, 'profile_output_success').format(count=success_count),
+                    parse_mode='HTML',
+                    timeout=120
+                )
+            logger.info("✅ 成功账号ZIP已发送")
+        except Exception as e:
+            logger.error(f"❌ 发送成功账号ZIP失败: {e}")
+    
+    # ========================================
+    # 6. 发送失败账号ZIP
+    # ========================================
+    if failed_zip_path and os.path.exists(failed_zip_path):
+        try:
+            with open(failed_zip_path, 'rb') as f:
+                context.bot.send_document(
+                    chat_id=user_id,
+                    document=f,
+                    filename=f"profile_failed_{failed_count}.zip",
+                    caption=t(user_id, 'profile_output_failed').format(count=failed_count),
+                    parse_mode='HTML',
+                    timeout=120
+                )
+            logger.info("✅ 失败账号ZIP已发送")
+        except Exception as e:
+            logger.error(f"❌ 发送失败账号ZIP失败: {e}")
+    
+    # ========================================
+    # 7. 更新最终消息
+    # ========================================
+    error_stats_text = ""
+    if error_stats:
+        error_stats_text = f"\n\n<b>{t(user_id, 'profile_error_stats')}</b>\n"
+        for error_name, count in sorted(error_stats.items(), key=lambda x: x[1], reverse=True):
+            error_stats_text += f"• {error_name}: {count}\n"
+    
+    files_sent_text = f"\n\n<b>{t(user_id, 'profile_files_sent')}</b>\n{t(user_id, 'profile_file_report')} profile_report.txt"
+    if success_zip_path:
+        files_sent_text += f"\n{t(user_id, 'profile_file_success')} profile_success_{success_count}.zip"
+    if failed_zip_path:
+        files_sent_text += f"\n{t(user_id, 'profile_file_failed')} profile_failed_{failed_count}.zip"
+    
+    final_text = f"""<b>{t(user_id, 'profile_complete')}</b>
+
+
+    def handle_profile_update_start(self, query):
+    """处理修改资料开始"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    # 检查会员权限
+    if not self.db.is_admin(user_id):
+        is_member, level, expiry = self.db.check_membership(user_id)
+        if not is_member:
+            query.edit_message_text(
+                text=t(user_id, 'profile_need_member'),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(t(user_id, 'btn_vip_menu'), callback_data="vip_menu"),
+                    InlineKeyboardButton(t(user_id, 'btn_back_to_menu'), callback_data="back_to_main")
+                ]]),
+                parse_mode='HTML'
+            )
+            return
+    
+    text = f"""
+
+    def handle_profile_update_callbacks(self, update: Update, context: CallbackContext, query, data: str):
+    """处理修改资料相关回调"""
+    user_id = query.from_user.id
+    
+    if data == "profile_mode_random":
+        self.handle_profile_random_mode(query, user_id)
+    elif data == "profile_mode_custom":
+        self.handle_profile_custom_mode(query, user_id)
+    elif data == "profile_custom_back":
+        # 返回自定义配置菜单
+        if user_id in self.pending_profile_update:
+            config = self.pending_profile_update[user_id]['config']
+            self._show_custom_config_menu(query, user_id, config)
+        else:
+            query.answer(t(user_id, 'profile_session_expired'))
+    elif data.startswith("profile_random_"):
+        self.handle_profile_random_config(update, context, query, data, user_id)
+    elif data.startswith("profile_custom_"):
+        self.handle_profile_custom_config(update, context, query, data, user_id)
+    elif data == "profile_execute":
+        self.handle_profile_update_execute(update, context, query, user_id)
+    elif data == "profile_confirm_execute":
+        self.handle_profile_confirm_execute(update, context, query, user_id)
+    elif data == "profile_cancel":
+        query.answer()
+        if user_id in self.pending_profile_update:
+            self.cleanup_profile_update_task(user_id)
+        self.show_main_menu(update, user_id)
+
+
+    def handle_profile_random_mode(self, query, user_id: int):
+    """处理随机生成模式"""
+    query.answer()
+    
+    # 初始化配置
+    config = ProfileUpdateConfig(mode='random')
+    config.update_name = True
+    config.photo_action = 'keep'
+    config.bio_action = 'keep'
+    config.username_action = 'keep'
+    
+    self.pending_profile_update[user_id] = {
+        'config': config,
+        'status': 'configuring'
+    }
+    
+    self._show_random_config_menu(query, user_id, config)
+
+
+    def handle_profile_random_config(self, update: Update, context: CallbackContext, query, data: str, user_id: int):
+    """处理随机模式配置选项"""
+    query.answer()
+    
+    if user_id not in self.pending_profile_update:
+        query.answer(t(user_id, 'profile_session_expired'))
+        return
+    
+    config = self.pending_profile_update[user_id]['config']
+    
+    if data == "profile_random_photo":
+        # 切换头像选项
+        if config.photo_action == 'keep':
+            config.photo_action = 'delete_all'
+            config.update_photo = True
+        else:
+            config.photo_action = 'keep'
+            config.update_photo = False
+    elif data == "profile_random_bio":
+        # 循环切换简介选项：keep -> clear -> random -> keep
+        if config.bio_action == 'keep':
+            config.bio_action = 'clear'
+            config.update_bio = True
+        elif config.bio_action == 'clear':
+            config.bio_action = 'random'
+            config.update_bio = True
+        else:
+            config.bio_action = 'keep'
+            config.update_bio = False
+    elif data == "profile_random_username":
+        # 循环切换用户名选项：keep -> delete -> random -> keep
+        if config.username_action == 'keep':
+            config.username_action = 'delete'
+            config.update_username = True
+        elif config.username_action == 'delete':
+            config.username_action = 'random'
+            config.update_username = True
+        else:
+            config.username_action = 'keep'
+            config.update_username = False
+    
+    # 刷新菜单
+    self._show_random_config_menu(query, user_id, config)
+
+
+    def handle_profile_custom_mode(self, query, user_id: int):
+    """处理自定义生成模式"""
+    query.answer()
+    
+    # 初始化配置
+    config = ProfileUpdateConfig(mode='custom')
+    config.update_name = False
+    config.update_photo = False
+    config.update_bio = False
+    config.update_username = False
+    
+    self.pending_profile_update[user_id] = {
+        'config': config,
+        'status': 'configuring',
+        'custom_input_field': None  # 当前正在配置的字段
+    }
+    
+    self._show_custom_config_menu(query, user_id, config)
+
+
+    def handle_profile_custom_config(self, update: Update, context: CallbackContext, query, data: str, user_id: int):
+    """处理自定义模式配置选项"""
+    query.answer()
+    
+    if user_id not in self.pending_profile_update:
+        query.answer(t(user_id, 'profile_custom_session_expired'))
+        return
+    
+    config = self.pending_profile_update[user_id]['config']
+    task = self.pending_profile_update[user_id]
+    
+    if data == "profile_custom_name":
+        # 配置姓名
+        self._show_custom_field_config(query, user_id, 'name', t(user_id, 'profile_field_name'))
+    elif data == "profile_custom_photo":
+        # 配置头像
+        self._show_custom_field_config(query, user_id, 'photo', t(user_id, 'profile_field_avatar'))
+    elif data == "profile_custom_bio":
+        # 配置简介
+        self._show_custom_field_config(query, user_id, 'bio', t(user_id, 'profile_field_bio'))
+    elif data == "profile_custom_username":
+        # 配置用户名
+        self._show_custom_field_config(query, user_id, 'username', t(user_id, 'profile_field_username'))
+    elif data.startswith("profile_custom_field_"):
+        # 处理字段配置选项
+        self._handle_custom_field_action(update, context, query, data, user_id)
+
+
+    def handle_profile_custom_text_input(self, update: Update, context: CallbackContext, user_id: int, field_name: str, text: str):
+    """处理自定义资料的文本输入"""
+    if user_id not in self.pending_profile_update:
+        self.safe_send_message(update, t(user_id, 'profile_custom_session_expired_restart'), 'HTML')
+        return
+    
+    config = self.pending_profile_update[user_id]['config']
+    
+    # 解析输入的文本（按行分割）
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    
+    if not lines:
+        self.safe_send_message(update, t(user_id, 'profile_custom_input_empty'), 'HTML')
+        return
+    
+    # Helper function to get translated field display name
+    def get_field_display(field):
+        field_map = {
+            'name': 'profile_field_name',
+            'bio': 'profile_field_bio',
+            'username': 'profile_field_username'
+        }
+        return t(user_id, field_map.get(field, 'profile_field_name'))
+    
+    field_display = get_field_display(field_name)
+    
+    if field_name == 'name':
+        config.custom_names = lines
+        config.update_name = True
+    elif field_name == 'bio':
+        config.custom_bios = lines
+        config.update_bio = True
+        config.bio_action = 'custom'
+    elif field_name == 'username':
+        config.custom_usernames = lines
+        config.update_username = True
+        config.username_action = 'custom'
+    
+    # 清除用户状态
+    self.db.save_user(user_id, "", "", "profile_custom_config")
+    
+    # 发送确认消息和返回按钮
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton(t(user_id, 'profile_custom_field_back_to_menu'), callback_data="profile_custom_back")
+    ]])
+    
+    self.safe_send_message(
+        update,
+        t(user_id, 'profile_custom_configured').format(count=len(lines), field=field_display),
+        'HTML',
+        reply_markup=keyboard
+    )
+
+
+    def _create_avatar_upload_dir(self, user_id: int) -> str:
+    """创建头像上传目录并返回路径"""
+    upload_dir = os.path.join(config.UPLOADS_DIR, f"avatars_{user_id}_{int(time.time())}")
+    os.makedirs(upload_dir, exist_ok=True)
+    return upload_dir
+
+
+    def handle_profile_photo_upload(self, update: Update, context: CallbackContext, user_id: int):
+    """处理资料头像的单张图片上传"""
+    if user_id not in self.pending_profile_update:
+        self.safe_send_message(update, t(user_id, 'profile_custom_session_expired_restart'), 'HTML')
+        return
+    
+    config = self.pending_profile_update[user_id]['config']
+    
+    progress_msg = self.safe_send_message(update, t(user_id, 'profile_photo_processing'), 'HTML')
+    if not progress_msg:
+        return
+    
+    try:
+        # 获取最大尺寸的图片
+        photo = update.message.photo[-1]
+        
+        # 创建上传目录
+        upload_dir = self._create_avatar_upload_dir(user_id)
+        
+        # 下载图片
+        file = photo.get_file()
+        file_path = os.path.join(upload_dir, f"avatar_{user_id}.jpg")
+        file.download(file_path)
+        
+        # 保存到配置
+        config.custom_photos = [file_path]
+        config.update_photo = True
+        config.photo_action = 'custom'
+        
+        # 清除用户状态
+        self.db.save_user(user_id, "", "", "profile_custom_config")
+        
+        # 显示确认消息
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton(t(user_id, 'profile_custom_field_back_to_menu'), callback_data="profile_custom_back")
+        ]])
+        
+        self.safe_edit_message_text(
+            progress_msg,
+            t(user_id, 'profile_photo_uploaded_success'),
+            reply_markup=keyboard,
+            parse_mode='HTML'
+        )
+        
+    except Exception as e:
+        logger.error(f"处理资料头像上传失败: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        self.safe_edit_message_text(
+            progress_msg,
+            t(user_id, 'profile_photo_upload_failed').format(error=str(e)),
+            parse_mode='HTML'
+        )
+
+
+    def handle_profile_custom_file_upload(self, update: Update, context: CallbackContext, user_id: int, field_name: str, document):
+    """处理自定义资料的文件上传"""
+    if user_id not in self.pending_profile_update:
+        self.safe_send_message(update, t(user_id, 'profile_custom_session_expired_restart'), 'HTML')
+        return
+    
+    config = self.pending_profile_update[user_id]['config']
+    
+    progress_msg = self.safe_send_message(update, t(user_id, 'processing_your_file'), 'HTML')
+    if not progress_msg:
+        return
+    
+    try:
+        # 创建临时目录
+        temp_dir = tempfile.mkdtemp(prefix=f"profile_custom_{field_name}_")
+        temp_file = os.path.join(temp_dir, document.file_name)
+        
+        # 下载文件
+        document.get_file().download(temp_file)
+        
+        # Helper function to get translated field display name
+        def get_field_display(field):
+            field_map = {
+                'name': 'profile_field_name',
+                'photo': 'profile_field_avatar',
+                'bio': 'profile_field_bio',
+                'username': 'profile_field_username'
+            }
+            return t(user_id, field_map.get(field, 'profile_field_name'))
+        
+        field_display = get_field_display(field_name)
+        
+        if field_name == 'photo':
+            # 处理图片文件
+            items = []
+            
+            # 检查是否是图片文件
+            if temp_file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
+                # 单个图片文件
+                upload_dir = self._create_avatar_upload_dir(user_id)
+                dest_path = os.path.join(upload_dir, document.file_name)
+                shutil.copy(temp_file, dest_path)
+                items.append(dest_path)
+                
+            elif temp_file.lower().endswith('.zip'):
+                # ZIP文件，解压并提取图片
+                extract_dir = os.path.join(temp_dir, "extracted")
+                os.makedirs(extract_dir, exist_ok=True)
+                
+                with zipfile.ZipFile(temp_file, 'r') as zip_ref:
+                    zip_ref.extractall(extract_dir)
+                
+                # 查找所有图片文件
+                upload_dir = self._create_avatar_upload_dir(user_id)
+                for root, dirs, files in os.walk(extract_dir):
+                    for file in files:
+                        if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
+                            file_path = os.path.join(root, file)
+                            dest_path = os.path.join(upload_dir, file)
+                            shutil.copy(file_path, dest_path)
+                            items.append(dest_path)
+            
+            if not items:
+                self.safe_edit_message_text(
+                    progress_msg,
+                    t(user_id, 'profile_custom_no_images'),
+                    parse_mode='HTML'
+                )
+                return
+            
+            config.custom_photos = items
+            config.update_photo = True
+            config.photo_action = 'custom'
+            
+        else:
+            # 处理文本文件（姓名、简介、用户名）
+            # 验证是否为 .txt 文件
+            if not temp_file.lower().endswith('.txt'):
+                self.safe_edit_message_text(
+                    progress_msg,
+                    f"❌ <b>文件格式错误</b>\n\n请上传 .txt 文本文件，当前文件: {document.file_name}",
+                    parse_mode='HTML'
+                )
+                return
+            
+            try:
+                with open(temp_file, 'r', encoding='utf-8') as f:
+                    lines = [line.strip() for line in f if line.strip()]
+            except UnicodeDecodeError:
+                # 尝试其他编码
+                try:
+                    with open(temp_file, 'r', encoding='gbk') as f:
+                        lines = [line.strip() for line in f if line.strip()]
+                except:
+                    self.safe_edit_message_text(
+                        progress_msg,
+                        t(user_id, 'profile_custom_encoding_error'),
+                        parse_mode='HTML'
+                    )
+                    return
+            
+            if not lines:
+                self.safe_edit_message_text(
+                    progress_msg,
+                    t(user_id, 'profile_custom_file_empty'),
+                    parse_mode='HTML'
+                )
+                return
+            
+            # 根据字段类型保存
+            if field_name == 'name':
+                config.custom_names = lines
+                config.update_name = True
+            elif field_name == 'bio':
+                config.custom_bios = lines
+                config.update_bio = True
+                config.bio_action = 'custom'
+            elif field_name == 'username':
+                config.custom_usernames = lines
+                config.update_username = True
+                config.username_action = 'custom'
+            
+            items = lines
+        
+        # 清除用户状态
+        self.db.save_user(user_id, "", "", "profile_custom_config")
+        
+        # 显示确认消息
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton(t(user_id, 'profile_custom_field_back_to_menu'), callback_data="profile_custom_back")
+        ]])
+        
+        self.safe_edit_message_text(
+            progress_msg,
+            t(user_id, 'profile_custom_configured').format(count=len(items), field=field_display),
+            reply_markup=keyboard,
+            parse_mode='HTML'
+        )
+        
+    except Exception as e:
+        logger.error(f"处理自定义资料文件上传失败: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        self.safe_edit_message_text(
+            progress_msg,
+            t(user_id, 'profile_custom_processing_failed').format(error=str(e)),
+            parse_mode='HTML'
+        )
+    finally:
+        # 清理临时文件
+        if temp_dir and os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+    def handle_profile_confirm_execute(self, update: Update, context: CallbackContext, query, user_id: int):
+    """处理确认执行资料修改"""
+    query.answer()
+    
+    if user_id not in self.pending_profile_update:
+        self.safe_edit_message(query, t(user_id, 'profile_custom_task_expired'))
+        return
+    
+    task = self.pending_profile_update[user_id]
+    
+    # 检查是否有文件信息
+    if 'files' not in task or 'file_type' not in task or 'progress_msg' not in task:
+        self.safe_edit_message(query, "❌ 任务信息不完整，请重新上传文件")
+        return
+    
+    files = task['files']
+    file_type = task['file_type']
+    config = task['config']
+    progress_msg = task['progress_msg']
+    
+    # 开始执行（使用线程运行异步任务，避免事件循环错误）
+    def execute_profile_update():
+        try:
+            asyncio.run(self._execute_profile_update(user_id, files, file_type, config, context, progress_msg))
+        except asyncio.CancelledError:
+            logger.info(f"[profile_update] 任务被取消")
+        except Exception as e:
+            logger.error(f"[profile_update] 处理异常: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    thread = threading.Thread(target=execute_profile_update, daemon=True)
+    thread.start()
+
+
+    def handle_profile_update_execute(self, update: Update, context: CallbackContext, query, user_id: int):
+    """开始执行资料修改"""
+    query.answer()
+    
+    if user_id not in self.pending_profile_update:
+        self.safe_edit_message(query, t(user_id, 'profile_session_expired'))
+        return
+    
+    task = self.pending_profile_update[user_id]
+    config = task['config']
+    
+    text = f"""
+

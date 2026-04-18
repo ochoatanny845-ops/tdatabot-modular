@@ -1464,3 +1464,311 @@ class SpamBotChecker:
 # ================================
 
 
+
+
+# ===== Handler Methods from EnhancedBot =====
+
+    def handle_start_check(self, query):
+    """处理开始检测"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    # 检查权限
+    is_member, level, _ = self.db.check_membership(user_id)
+    if not is_member and not self.db.is_admin(user_id):
+        self.safe_edit_message(query, "❌ 需要会员权限才能使用检测功能")
+        return
+    
+    if not TELETHON_AVAILABLE:
+        self.safe_edit_message(query, "❌ 检测功能不可用\n\n原因: Telethon库未安装")
+        return
+    
+    proxy_info = ""
+    if config.USE_PROXY:
+        proxy_count = len(self.proxy_manager.proxies)
+        proxy_info = f"\n{t(user_id, 'account_check_proxy_enabled').format(count=proxy_count)}"
+    else:
+        proxy_info = f"\n{t(user_id, 'account_check_proxy_disabled')}"
+    
+    text = f"""
+
+    def handle_check_registration_start(self, query):
+    """处理查询注册时间开始"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    # 检查会员权限
+    if not self.db.is_admin(user_id):
+        is_member, level, expiry = self.db.check_membership(user_id)
+        if not is_member:
+            query.edit_message_text(
+                text=t(user_id, 'regtime_need_member'),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(t(user_id, 'btn_vip_menu'), callback_data="vip_menu"),
+                    InlineKeyboardButton(t(user_id, 'btn_back_to_menu'), callback_data="back_to_main")
+                ]]),
+                parse_mode='HTML'
+            )
+            return
+    
+    text = f"""
+
+    def handle_check_registration_callbacks(self, update: Update, context: CallbackContext, query, data: str):
+    """处理查询注册时间相关回调"""
+    user_id = query.from_user.id
+    
+    if data == "check_reg_cancel":
+        query.answer()
+        if user_id in self.pending_registration_check:
+            self.cleanup_registration_check_task(user_id)
+        self.show_main_menu(update, user_id)
+    elif data == "check_reg_execute":
+        query.answer()
+        self.handle_registration_check_execute(update, context, query, user_id)
+
+
+    def handle_registration_check_execute(self, update: Update, context: CallbackContext, query, user_id: int):
+    """执行注册时间查询"""
+    query.answer()
+    
+    if user_id not in self.pending_registration_check:
+        self.safe_edit_message(query, t(user_id, 'regtime_session_expired'))
+        return
+    
+    task = self.pending_registration_check[user_id]
+    files = task['files']
+    file_type = task['file_type']
+    progress_msg = task.get('progress_msg')
+    
+    # 启动异步任务
+    def run_registration_check():
+        try:
+            asyncio.run(self._execute_registration_check(user_id, files, file_type, context, progress_msg))
+        except Exception as e:
+            logger.error(f"Registration check execution failed: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    thread = threading.Thread(target=run_registration_check, daemon=True)
+    thread.start()
+    
+    # 更新消息
+    self.safe_edit_message(
+        query,
+        f"🔄 <b>{t(user_id, 'regtime_querying')} {len(files)} {t(user_id, 'accounts_unit')}...</b>\n\n{t(user_id, 'regtime_may_take_minutes')}",
+        parse_mode='HTML'
+    )
+
+async def _execute_registration_check(self, user_id: int, files: List, file_type: str, context: CallbackContext, progress_msg):
+    """执行注册时间查询的核心逻辑"""
+    results = {
+        'success': [],
+        'error': [],
+        'frozen': [],
+        'banned': []
+    }
+    
+    total = len(files)
+    processed = 0
+    
+    # 并发查询（使用信号量控制并发数）
+    semaphore = asyncio.Semaphore(10)  # 最多10个并发
+    
+    async def check_single_account(file_path, file_name):
+        nonlocal processed
+        async with semaphore:
+            try:
+                result = await self.check_account_registration_time(file_path, file_name, file_type, user_id)
+                
+                if result['status'] == 'success':
+                    results['success'].append((file_path, file_name, result))
+                elif result['status'] == 'frozen':
+                    results['frozen'].append((file_path, file_name, result))
+                elif result['status'] == 'banned':
+                    results['banned'].append((file_path, file_name, result))
+                else:
+                    results['error'].append((file_path, file_name, result))
+                
+                processed += 1
+                
+                # 每处理10个更新一次进度
+                if processed % 10 == 0 or processed == total:
+                    try:
+                        progress_text = f"""{t(user_id, 'regtime_progress_title')}
+
+
+    def handle_check_contact_limit(self, query):
+    """处理检查通讯录限制按钮"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    # 检查会员权限
+    if not self.db.is_admin(user_id):
+        is_member, level, expiry = self.db.check_membership(user_id)
+        if not is_member:
+            query.edit_message_text(
+                text=f"{t(user_id, 'cleanup_need_member')}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(t(user_id, 'btn_vip_menu'), callback_data="vip_menu"),
+                    InlineKeyboardButton(f"🔙 {t(user_id, 'btn_back_to_menu')}", callback_data="back_to_main")
+                ]]),
+                parse_mode='HTML'
+            )
+            return
+    
+    text = f"""
+
+
+
+# ===== Handler Methods =====
+
+    def handle_start_check(self, query):
+    """处理开始检测"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    # 检查权限
+    is_member, level, _ = self.db.check_membership(user_id)
+    if not is_member and not self.db.is_admin(user_id):
+        self.safe_edit_message(query, "❌ 需要会员权限才能使用检测功能")
+        return
+    
+    if not TELETHON_AVAILABLE:
+        self.safe_edit_message(query, "❌ 检测功能不可用\n\n原因: Telethon库未安装")
+        return
+    
+    proxy_info = ""
+    if config.USE_PROXY:
+        proxy_count = len(self.proxy_manager.proxies)
+        proxy_info = f"\n{t(user_id, 'account_check_proxy_enabled').format(count=proxy_count)}"
+    else:
+        proxy_info = f"\n{t(user_id, 'account_check_proxy_disabled')}"
+    
+    text = f"""
+
+    def handle_check_registration_start(self, query):
+    """处理查询注册时间开始"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    # 检查会员权限
+    if not self.db.is_admin(user_id):
+        is_member, level, expiry = self.db.check_membership(user_id)
+        if not is_member:
+            query.edit_message_text(
+                text=t(user_id, 'regtime_need_member'),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(t(user_id, 'btn_vip_menu'), callback_data="vip_menu"),
+                    InlineKeyboardButton(t(user_id, 'btn_back_to_menu'), callback_data="back_to_main")
+                ]]),
+                parse_mode='HTML'
+            )
+            return
+    
+    text = f"""
+
+    def handle_check_registration_callbacks(self, update: Update, context: CallbackContext, query, data: str):
+    """处理查询注册时间相关回调"""
+    user_id = query.from_user.id
+    
+    if data == "check_reg_cancel":
+        query.answer()
+        if user_id in self.pending_registration_check:
+            self.cleanup_registration_check_task(user_id)
+        self.show_main_menu(update, user_id)
+    elif data == "check_reg_execute":
+        query.answer()
+        self.handle_registration_check_execute(update, context, query, user_id)
+
+
+    def handle_registration_check_execute(self, update: Update, context: CallbackContext, query, user_id: int):
+    """执行注册时间查询"""
+    query.answer()
+    
+    if user_id not in self.pending_registration_check:
+        self.safe_edit_message(query, t(user_id, 'regtime_session_expired'))
+        return
+    
+    task = self.pending_registration_check[user_id]
+    files = task['files']
+    file_type = task['file_type']
+    progress_msg = task.get('progress_msg')
+    
+    # 启动异步任务
+    def run_registration_check():
+        try:
+            asyncio.run(self._execute_registration_check(user_id, files, file_type, context, progress_msg))
+        except Exception as e:
+            logger.error(f"Registration check execution failed: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    thread = threading.Thread(target=run_registration_check, daemon=True)
+    thread.start()
+    
+    # 更新消息
+    self.safe_edit_message(
+        query,
+        f"🔄 <b>{t(user_id, 'regtime_querying')} {len(files)} {t(user_id, 'accounts_unit')}...</b>\n\n{t(user_id, 'regtime_may_take_minutes')}",
+        parse_mode='HTML'
+    )
+
+async def _execute_registration_check(self, user_id: int, files: List, file_type: str, context: CallbackContext, progress_msg):
+    """执行注册时间查询的核心逻辑"""
+    results = {
+        'success': [],
+        'error': [],
+        'frozen': [],
+        'banned': []
+    }
+    
+    total = len(files)
+    processed = 0
+    
+    # 并发查询（使用信号量控制并发数）
+    semaphore = asyncio.Semaphore(10)  # 最多10个并发
+    
+    async def check_single_account(file_path, file_name):
+        nonlocal processed
+        async with semaphore:
+            try:
+                result = await self.check_account_registration_time(file_path, file_name, file_type, user_id)
+                
+                if result['status'] == 'success':
+                    results['success'].append((file_path, file_name, result))
+                elif result['status'] == 'frozen':
+                    results['frozen'].append((file_path, file_name, result))
+                elif result['status'] == 'banned':
+                    results['banned'].append((file_path, file_name, result))
+                else:
+                    results['error'].append((file_path, file_name, result))
+                
+                processed += 1
+                
+                # 每处理10个更新一次进度
+                if processed % 10 == 0 or processed == total:
+                    try:
+                        progress_text = f"""{t(user_id, 'regtime_progress_title')}
+
+
+    def handle_check_contact_limit(self, query):
+    """处理检查通讯录限制按钮"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    # 检查会员权限
+    if not self.db.is_admin(user_id):
+        is_member, level, expiry = self.db.check_membership(user_id)
+        if not is_member:
+            query.edit_message_text(
+                text=f"{t(user_id, 'cleanup_need_member')}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(t(user_id, 'btn_vip_menu'), callback_data="vip_menu"),
+                    InlineKeyboardButton(f"🔙 {t(user_id, 'btn_back_to_menu')}", callback_data="back_to_main")
+                ]]),
+                parse_mode='HTML'
+            )
+            return
+    
+    text = f"""
+

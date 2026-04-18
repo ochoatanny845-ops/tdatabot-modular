@@ -1155,3 +1155,393 @@ class FormatConverter:
 # ================================
 
 
+
+
+# ===== Handler Methods from EnhancedBot =====
+
+    def convert_command(self, update: Update, context: CallbackContext):
+    """格式转换命令"""
+    user_id = update.effective_user.id
+    
+    # 检查权限
+    is_member, level, _ = self.db.check_membership(user_id)
+    if not is_member and not self.db.is_admin(user_id):
+        self.safe_send_message(update, "❌ 需要会员权限才能使用格式转换功能")
+        return
+    
+    if not OPENTELE_AVAILABLE:
+        self.safe_send_message(update, "❌ 格式转换功能不可用\n\n原因: opentele库未安装\n💡 请安装: pip install opentele")
+        return
+    
+    text = f"""
+
+    def handle_format_conversion(self, query):
+    """处理格式转换选项"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    # 检查权限
+    is_member, level, _ = self.db.check_membership(user_id)
+    if not is_member and not self.db.is_admin(user_id):
+        self.safe_edit_message(query, "❌ 需要会员权限才能使用格式转换功能")
+        return
+    
+    if not OPENTELE_AVAILABLE:
+        self.safe_edit_message(query, "❌ 格式转换功能不可用\n\n原因: opentele库未安装\n💡 请安装: pip install opentele")
+        return
+    
+    text = f"""
+
+    def handle_convert_tdata_to_session(self, query):
+    """处理Tdata转Session"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    text = f"""
+
+    def handle_convert_session_to_tdata(self, query):
+    """处理Session转Tdata"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    text = f"""
+
+
+
+# ===== Handler Methods =====
+
+    def convert_command(self, update: Update, context: CallbackContext):
+    """格式转换命令"""
+    user_id = update.effective_user.id
+    
+    # 检查权限
+    is_member, level, _ = self.db.check_membership(user_id)
+    if not is_member and not self.db.is_admin(user_id):
+        self.safe_send_message(update, "❌ 需要会员权限才能使用格式转换功能")
+        return
+    
+    if not OPENTELE_AVAILABLE:
+        self.safe_send_message(update, "❌ 格式转换功能不可用\n\n原因: opentele库未安装\n💡 请安装: pip install opentele")
+        return
+    
+    text = f"""
+
+    def handle_format_conversion(self, query):
+    """处理格式转换选项"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    # 检查权限
+    is_member, level, _ = self.db.check_membership(user_id)
+    if not is_member and not self.db.is_admin(user_id):
+        self.safe_edit_message(query, "❌ 需要会员权限才能使用格式转换功能")
+        return
+    
+    if not OPENTELE_AVAILABLE:
+        self.safe_edit_message(query, "❌ 格式转换功能不可用\n\n原因: opentele库未安装\n💡 请安装: pip install opentele")
+        return
+    
+    text = f"""
+
+    def handle_convert_tdata_to_session(self, query):
+    """处理Tdata转Session"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    text = f"""
+
+    def handle_convert_session_to_tdata(self, query):
+    """处理Session转Tdata"""
+    query.answer()
+    user_id = query.from_user.id
+    
+    text = f"""
+
+    def extract_phone_from_tdata_path(self, account_root: str, tdata_dir_name: str) -> Optional[str]:
+    """从TData目录路径中提取手机号"""
+    try:
+        # 方法1: 检查tdata父目录名是否是手机号
+        parent_dir = os.path.basename(account_root)
+        phone_clean = parent_dir.lstrip('+')
+        if phone_clean.isdigit() and len(phone_clean) >= 10:
+            return phone_clean
+        
+        # 方法2: 检查account_root的上级目录
+        path_parts = account_root.split(os.sep)
+        for part in reversed(path_parts):
+            if not part:
+                continue
+            phone_clean = part.lstrip('+')
+            if phone_clean.isdigit() and len(phone_clean) >= 10:
+                return phone_clean
+    except Exception as e:
+        print(f"⚠️ 从TData路径提取手机号失败: {e}")
+    return None
+
+async def process_merge_files(self, update, context, user_id: int):
+    """处理账户文件合并 - 解压所有ZIP并递归扫描"""
+    if user_id not in self.pending_merge:
+        return
+    
+    task = self.pending_merge[user_id]
+    temp_dir = task['temp_dir']
+    files = task['files']
+    
+    # 创建解压工作目录
+    extract_dir = os.path.join(temp_dir, 'extracted')
+    os.makedirs(extract_dir, exist_ok=True)
+    
+    # 第一步：解压所有ZIP文件
+    for filename in files:
+        file_path = os.path.join(temp_dir, filename)
+        if filename.lower().endswith('.zip'):
+            try:
+                # 为每个ZIP创建单独的子目录
+                zip_extract_dir = os.path.join(extract_dir, filename.replace('.zip', ''))
+                os.makedirs(zip_extract_dir, exist_ok=True)
+                
+                with zipfile.ZipFile(file_path, 'r') as zf:
+                    zf.extractall(zip_extract_dir)
+            except Exception as e:
+                print(f"❌ 解压失败 {filename}: {e}")
+    
+    # 第二步：递归扫描所有解压后的内容 - 使用统一扫描函数
+    print("📂 开始扫描账号...")
+    
+    # 使用统一的 tdata 扫描函数
+    tdata_accounts_unified = scan_tdata_accounts(extract_dir)
+    
+    # 转换为原有格式 (account_root, tdata_dir_name)
+    tdata_accounts = []
+    for account in tdata_accounts_unified:
+        account_root = account['account_path']
+        tdata_path_abs = account['tdata_path']
+        # 计算 tdata 相对于账号根目录的路径（空字符串表示 tdata 就是账号根目录）
+        if tdata_path_abs == account_root:
+            tdata_dir_name = ''
+        else:
+            tdata_dir_name = os.path.relpath(tdata_path_abs, account_root)
+        tdata_accounts.append((account_root, tdata_dir_name))
+        print(f"📂 找到TData账号: {account['phone']} -> {tdata_path_abs}")
+    
+    # 扫描Session文件
+    session_json_pairs = []  # 存储 Session+JSON 配对
+    
+    def scan_sessions(dir_path):
+        """递归扫描Session文件"""
+        try:
+            for root, dirs, filenames in os.walk(dir_path):
+                # 检查当前目录中的 Session 文件 (支持纯Session或Session+JSON配对)
+                session_files = {}
+                json_files = {}
+                
+                for fname in filenames:
+                    if fname.lower().endswith('.session'):
+                        # 过滤系统文件
+                        if fname == 'tdata.session' or fname.startswith('batch_validate_') or fname.startswith('temp_') or fname.startswith('user_'):
+                            continue
+                        basename = fname[:-8]  # 去掉 .session
+                        session_files[basename] = os.path.join(root, fname)
+                    elif fname.lower().endswith('.json'):
+                        basename = fname[:-5]  # 去掉 .json
+                        json_files[basename] = os.path.join(root, fname)
+                
+                # 添加所有session文件，优先使用配对的JSON（如果有）
+                # 元组格式: (session_path, json_path, basename) 其中 json_path 可以为 None
+                for basename in session_files.keys():
+                    session_path = session_files[basename]
+                    json_path = json_files.get(basename, None)  # JSON可选，可能为None
+                    session_json_pairs.append((session_path, json_path, basename))
+        except Exception as e:
+            print(f"❌ 扫描Session文件失败 {dir_path}: {e}")
+    
+    # 扫描所有Session文件
+    scan_sessions(extract_dir)
+    print(f"📱 找到 {len(session_json_pairs)} 个Session文件")
+    
+    # 第三步：提取手机号并去重 - 同时追踪重复项
+    # 为TData账户提取手机号
+    tdata_with_phones = {}  # phone -> (account_root, tdata_dir_name)
+    tdata_without_phones = []  # 没有手机号的账户
+    tdata_duplicates = []  # 重复的TData账户: [(phone, account_root, tdata_dir_name), ...]
+    
+    for account_root, tdata_dir_name in tdata_accounts:
+        phone = self.extract_phone_from_tdata_path(account_root, tdata_dir_name)
+        if phone:
+            # 去重：如果手机号已存在，保留第一个，将重复的添加到duplicates
+            if phone not in tdata_with_phones:
+                tdata_with_phones[phone] = (account_root, tdata_dir_name)
+            else:
+                print(f"⚠️ 发现重复TData账户，手机号: {phone}，将单独打包")
+                tdata_duplicates.append((phone, account_root, tdata_dir_name))
+        else:
+            tdata_without_phones.append((account_root, tdata_dir_name))
+    
+    # 为Session文件提取手机号 (支持纯Session或Session+JSON配对)
+    session_json_with_phones = {}  # phone -> (session_path, json_path)
+    session_json_duplicates = []  # 重复的Session文件: [(phone, session_path, json_path), ...]
+    
+    for session_path, json_path, basename in session_json_pairs:
+        # 尝试从JSON提取手机号（如果JSON存在）
+        phone = None
+        if json_path:
+            phone = self.extract_phone_from_json(json_path)
+        
+        if phone:
+            # 去重：如果手机号已存在，保留第一个，将重复的添加到duplicates
+            if phone not in session_json_with_phones:
+                session_json_with_phones[phone] = (session_path, json_path)
+            else:
+                print(f"⚠️ 发现重复Session，手机号: {phone}，将单独打包")
+                session_json_duplicates.append((phone, session_path, json_path))
+        else:
+            # 如果JSON中没有手机号或没有JSON，使用basename作为标识
+            if basename not in session_json_with_phones:
+                session_json_with_phones[basename] = (session_path, json_path)
+                if not json_path:
+                    print(f"ℹ️ 处理纯Session文件（无JSON）: {basename}")
+    
+    # 第四步：创建输出 ZIP 文件
+    result_dir = os.path.join(temp_dir, 'results')
+    os.makedirs(result_dir, exist_ok=True)
+    
+    timestamp = int(time.time())
+    zip_files_created = []
+    
+    # 统计去重后的数量
+    total_tdata = len(tdata_with_phones) + len(tdata_without_phones)
+    total_session_json = len(session_json_with_phones)
+    total_tdata_duplicates = len(tdata_duplicates)
+    total_session_duplicates = len(session_json_duplicates)
+    duplicates_removed = total_tdata_duplicates + total_session_duplicates
+    
+    # 打包 TData 账户（使用手机号作为目录名）
+    if tdata_with_phones or tdata_without_phones:
+        tdata_zip_path = os.path.join(result_dir, f'tdata_only_{timestamp}.zip')
+        with zipfile.ZipFile(tdata_zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            # 先处理有手机号的账户
+            for phone, (account_root, tdata_dir_name) in tdata_with_phones.items():
+                tdata_full_path = os.path.join(account_root, tdata_dir_name) if tdata_dir_name else account_root
+
+                # 检查 tdata 同级目录是否有密码文件
+                password_patterns = [
+                    '2fa.txt', '2FA.txt', '2fa.TXT',
+                    'twofa.txt', 'twoFA.txt', 'TwoFA.txt', 'TWOFA.txt',
+                    'password.txt', 'Password.txt', 'PASSWORD.txt',
+                    'pwd.txt', 'PWD.txt', 'Pwd.txt',
+                    '两步验证.txt', '二步验证.txt', '密码.txt',
+                    'pass.txt', 'Pass.txt', 'PASS.txt'
+                ]
+                for pwd_file in password_patterns:
+                    pwd_path = os.path.join(account_root, pwd_file)
+                    if os.path.isfile(pwd_path):
+                        arcname = os.path.join(phone, pwd_file)
+                        zf.write(pwd_path, arcname)
+                        print(f"✅ 添加密码文件: {phone}/{pwd_file}")
+
+                # 递归添加 tdata 目录下的所有文件
+                for root, dirs, filenames in os.walk(tdata_full_path):
+                    for fname in filenames:
+                        file_path = os.path.join(root, fname)
+                        # 计算相对路径
+                        rel_path = os.path.relpath(file_path, account_root)
+                        # 使用手机号作为目录名: phone/tdata/...
+                        arcname = os.path.join(phone, rel_path)
+                        zf.write(file_path, arcname)
+            
+            # 处理没有手机号的账户（使用account_N命名）
+            for idx, (account_root, tdata_dir_name) in enumerate(tdata_without_phones, 1):
+                account_name = f'account_{idx}'
+                tdata_full_path = os.path.join(account_root, tdata_dir_name) if tdata_dir_name else account_root
+
+                # 检查 tdata 同级目录是否有密码文件
+                password_patterns = [
+                    '2fa.txt', '2FA.txt', '2fa.TXT',
+                    'twofa.txt', 'twoFA.txt', 'TwoFA.txt', 'TWOFA.txt',
+                    'password.txt', 'Password.txt', 'PASSWORD.txt',
+                    'pwd.txt', 'PWD.txt', 'Pwd.txt',
+                    '两步验证.txt', '二步验证.txt', '密码.txt',
+                    'pass.txt', 'Pass.txt', 'PASS.txt'
+                ]
+                for pwd_file in password_patterns:
+                    pwd_path = os.path.join(account_root, pwd_file)
+                    if os.path.isfile(pwd_path):
+                        arcname = os.path.join(account_name, pwd_file)
+                        zf.write(pwd_path, arcname)
+                        print(f"✅ 添加密码文件: {account_name}/{pwd_file}")
+
+                for root, dirs, filenames in os.walk(tdata_full_path):
+                    for fname in filenames:
+                        file_path = os.path.join(root, fname)
+                        rel_path = os.path.relpath(file_path, account_root)
+                        arcname = os.path.join(account_name, rel_path)
+                        zf.write(file_path, arcname)
+        
+        zip_files_created.append(('TData 账户', tdata_zip_path, total_tdata))
+    
+    # 打包 Session 文件（支持纯Session或Session+JSON配对，使用手机号作为文件名）
+    if session_json_with_phones:
+        session_json_zip_path = os.path.join(result_dir, f'session_json_{timestamp}.zip')
+        with zipfile.ZipFile(session_json_zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for phone, (session_path, json_path) in session_json_with_phones.items():
+                # 使用手机号作为文件名
+                zf.write(session_path, f'{phone}.session')
+                # 只在JSON存在时添加JSON文件
+                if json_path and os.path.exists(json_path):
+                    zf.write(json_path, f'{phone}.json')
+        
+        zip_files_created.append(('Session 文件', session_json_zip_path, total_session_json))
+    
+    # 【新增】单独打包重复的 TData 账户
+    if tdata_duplicates:
+        tdata_dup_zip_path = os.path.join(result_dir, f'tdata_duplicates_{timestamp}.zip')
+        with zipfile.ZipFile(tdata_dup_zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for idx, (phone, account_root, tdata_dir_name) in enumerate(tdata_duplicates, 1):
+                tdata_full_path = os.path.join(account_root, tdata_dir_name)
+                
+                # 使用 phone_duplicate_N 格式命名
+                duplicate_name = f'{phone}_duplicate_{idx}'
+                
+                # 递归添加 tdata 目录下的所有文件
+                for root, dirs, filenames in os.walk(tdata_full_path):
+                    for fname in filenames:
+                        file_path = os.path.join(root, fname)
+                        rel_path = os.path.relpath(file_path, account_root)
+                        arcname = os.path.join(duplicate_name, rel_path)
+                        zf.write(file_path, arcname)
+        
+        zip_files_created.append(('TData 重复账户', tdata_dup_zip_path, total_tdata_duplicates))
+    
+    # 【新增】单独打包重复的 Session 文件
+    if session_json_duplicates:
+        session_dup_zip_path = os.path.join(result_dir, f'session_duplicates_{timestamp}.zip')
+        with zipfile.ZipFile(session_dup_zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for idx, (phone, session_path, json_path) in enumerate(session_json_duplicates, 1):
+                # 使用 phone_duplicate_N 格式命名
+                duplicate_name = f'{phone}_duplicate_{idx}'
+                
+                zf.write(session_path, f'{duplicate_name}.session')
+                if json_path and os.path.exists(json_path):
+                    zf.write(json_path, f'{duplicate_name}.json')
+        
+        zip_files_created.append(('Session 重复文件', session_dup_zip_path, total_session_duplicates))
+    
+    # 发送结果
+    duplicate_info = ""
+    if duplicates_removed > 0:
+        duplicate_info = f"""
+
+    def is_tdata_zip(self, zip_path: str) -> bool:
+    """检测 ZIP 文件是否包含 TData 标识（case-insensitive）"""
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            # 检查是否包含 D877F783D5D3EF8C 目录（case-insensitive）
+            namelist = zf.namelist()
+            for name in namelist:
+                if 'D877F783D5D3EF8C'.lower() in name.lower():
+                    return True
+        return False
+    except:
+        return False
+
+
