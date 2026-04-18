@@ -19,9 +19,9 @@ try:
     # 优先用 --config，其次用环境变量，最后用默认 .env
     _ENV_FILE = args.config or os.getenv("ENV_FILE") or find_dotenv(".env", usecwd=True)
     load_dotenv(_ENV_FILE, override=True)
-    print(f"✅ .env loaded: {_ENV_FILE or 'None'}")
+    print(f"[OK] .env loaded: {_ENV_FILE or 'None'}")
 except Exception as e:
-    print(f"⚠️ dotenv not used: {e}")
+    print(f"[WARN] dotenv not used: {e}")
 import sys
 import sqlite3
 import logging
@@ -53,9 +53,9 @@ from collections import deque, namedtuple
 try:
     from i18n import get_text as t, set_user_language, get_user_language
     I18N_AVAILABLE = True
-    print("✅ i18n module loaded successfully")
+    print("[OK] i18n module loaded successfully")
 except ImportError:
-    print("⚠️ i18n module not available, using Chinese only")
+    print("[WARN] i18n module not available, using Chinese only")
     I18N_AVAILABLE = False
     # Fallback functions if i18n is not available
     def t(user_id, key):
@@ -130,9 +130,9 @@ if not hasattr(asyncio, 'to_thread'):
         return await loop.run_in_executor(_executor, lambda: func(*args, **kwargs))
     
     asyncio.to_thread = _to_thread_compat
-    print("⚠️ Python < 3.9 检测到，使用兼容的asyncio.to_thread实现")
+    print("[WARN] Python < 3.9 检测到，使用兼容的asyncio.to_thread实现")
 else:
-    print("✅ Python 3.9+ 检测到，使用原生asyncio.to_thread")
+    print("[OK] Python 3.9+ 检测到，使用原生asyncio.to_thread")
 
 # ================================
 # Python版本兼容性 - asyncio.timeout
@@ -178,9 +178,9 @@ if not hasattr(asyncio, 'timeout'):
                 timeout_handle.cancel()
     
     asyncio.timeout = _timeout_compat
-    print("⚠️ Python < 3.11 检测到，使用兼容的asyncio.timeout实现")
+    print("[WARN] Python < 3.11 检测到，使用兼容的asyncio.timeout实现")
 else:
-    print("✅ Python 3.11+ 检测到，使用原生asyncio.timeout")
+    print("[OK] Python 3.11+ 检测到，使用原生asyncio.timeout")
 
 # ================================
 # 日志配置
@@ -216,9 +216,9 @@ try:
     from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot, InputFile
     from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, CallbackContext
     from telegram.error import RetryAfter, TimedOut, NetworkError, BadRequest
-    print("✅ telegram库导入成功")
+    print("[OK] telegram库导入成功")
 except ImportError as e:
-    print(f"❌ telegram库导入失败: {e}")
+    print(f"[ERROR] telegram库导入失败: {e}")
     print("💡 请安装: pip install python-telegram-bot==13.15")
     sys.exit(1)
 
@@ -238,7 +238,7 @@ try:
     from telethon.tl.functions.users import GetFullUserRequest
     from telethon.tl.functions.contacts import ImportContactsRequest, DeleteContactsRequest
     TELETHON_AVAILABLE = True
-    print("✅ telethon库导入成功")
+    print("[OK] telethon库导入成功")
     
     # 输出Telethon版本信息（用于调试和支持registration_month字段）
     import telethon
@@ -253,10 +253,10 @@ try:
         except:
             pass
     else:
-        print("⚠️ 无法获取 Telethon 版本信息")
+        print("[WARN] 无法获取 Telethon 版本信息")
         
 except ImportError:
-    print("❌ telethon未安装")
+    print("[ERROR] telethon未安装")
     print("💡 请安装: pip install telethon")
     TELETHON_AVAILABLE = False
 
@@ -285,9 +285,9 @@ except NameError:
 try:
     import socks
     PROXY_SUPPORT = True
-    print("✅ 代理支持库导入成功")
+    print("[OK] 代理支持库导入成功")
 except ImportError:
-    print("⚠️ 代理支持库未安装，将使用基础代理功能")
+    print("[WARN] 代理支持库未安装，将使用基础代理功能")
     PROXY_SUPPORT = False
 
 try:
@@ -295,9 +295,9 @@ try:
     from opentele.td import TDesktop
     from opentele.tl import TelegramClient as OpenTeleClient
     OPENTELE_AVAILABLE = True
-    print("✅ opentele库导入成功")
+    print("[OK] opentele库导入成功")
 except ImportError:
-    print("⚠️ opentele未安装，格式转换功能不可用")
+    print("[WARN] opentele未安装，格式转换功能不可用")
     print("💡 请安装: pip install opentele")
     OPENTELE_AVAILABLE = False
 
@@ -314,24 +314,24 @@ if not OPENTELE_AVAILABLE:
 try:
     from account_classifier import AccountClassifier
     CLASSIFY_AVAILABLE = True
-    print("✅ 账号分类模块导入成功")
+    print("[OK] 账号分类模块导入成功")
 except Exception as e:
     CLASSIFY_AVAILABLE = False
-    print(f"⚠️ 账号分类模块不可用: {e}")
+    print(f"[WARN] 账号分类模块不可用: {e}")
 
 try:
     import phonenumbers
-    print("✅ phonenumbers 导入成功")
+    print("[OK] phonenumbers 导入成功")
 except Exception:
-    print("⚠️ 未安装 phonenumbers（账号国家识别将不可用）")
+    print("[WARN] 未安装 phonenumbers（账号国家识别将不可用）")
 # Flask相关导入（新增或确认存在）
 try:
     from flask import Flask, jsonify, request, render_template_string
     FLASK_AVAILABLE = True
-    print("✅ Flask库导入成功")
+    print("[OK] Flask库导入成功")
 except ImportError:
     FLASK_AVAILABLE = False
-    print("❌ Flask未安装（验证码网页功能不可用）")
+    print("[ERROR] Flask未安装（验证码网页功能不可用）")
 
 # ================================
 # 数据结构定义
@@ -349,7 +349,7 @@ class EnhancedBot:
         global config
         config = Config()
         if not config.validate():
-            print("❌ 配置验证失败")
+            print("[ERROR] 配置验证失败")
             sys.exit(1)
         
         self.db = Database(config.DB_NAME)
@@ -369,7 +369,7 @@ class EnhancedBot:
             # 首选：带参构造（新版本）
             self.api_converter = APIFormatConverter(self.db, base_url=config.BASE_URL)
         except TypeError as e:
-            print(f"⚠️ APIFormatConverter 带参构造失败：{e}，切换到兼容模式（无参+手动注入）")
+            print(f"[WARN] APIFormatConverter 带参构造失败：{e}，切换到兼容模式（无参+手动注入）")
             self.api_converter = APIFormatConverter()   # 老版本：无参
             self.api_converter.db = self.db
             self.api_converter.base_url = config.BASE_URL
@@ -382,7 +382,7 @@ class EnhancedBot:
         try:
             self.api_converter.start_web_server()
         except Exception as e:
-            print(f"⚠️ 验证码服务器启动失败: {e}")
+            print(f"[WARN] 验证码服务器启动失败: {e}")
 
         # 初始化账号分类器
         self.classifier = AccountClassifier() if CLASSIFY_AVAILABLE else None
@@ -432,9 +432,9 @@ class EnhancedBot:
         if config.ENABLE_BATCH_CREATE:
             try:
                 self.batch_creator = BatchCreatorService(self.db, self.proxy_manager, self.device_loader, config)
-                print("✅ 批量创建服务初始化成功")
+                print("[OK] 批量创建服务初始化成功")
             except Exception as e:
-                print(f"⚠️ 批量创建服务初始化失败: {e}")
+                print(f"[WARN] 批量创建服务初始化失败: {e}")
                 self.batch_creator = None
         else:
             self.batch_creator = None
@@ -444,20 +444,20 @@ class EnhancedBot:
         
         self.setup_handlers()
         
-        print("✅ 增强版机器人初始化完成")
+        print("[OK] 增强版机器人初始化完成")
     
 
     def run(self):
         print("🚀 启动增强版机器人（速度优化版）...")
         print(f"📡 代理模式: {'启用' if config.USE_PROXY else '禁用'}")
         print(f"🔢 可用代理: {len(self.proxy_manager.proxies)}个")
-        print(f"⚡ 快速模式: {'开启' if config.PROXY_FAST_MODE else '关闭'}")
+        print(f"[*] 快速模式: {'开启' if config.PROXY_FAST_MODE else '关闭'}")
         print(f"🚀 并发数: {config.PROXY_CHECK_CONCURRENT if config.PROXY_FAST_MODE else config.MAX_CONCURRENT_CHECKS}个")
         print(f"⏱️ 检测超时: {config.PROXY_CHECK_TIMEOUT if config.PROXY_FAST_MODE else config.CHECK_TIMEOUT}秒")
         print(f"🔄 智能重试: {config.PROXY_RETRY_COUNT}次")
         print(f"🧹 自动清理: {'启用' if config.PROXY_AUTO_CLEANUP else '禁用'}")
-        print("✅ 管理员系统: 启用")
-        print("✅ 速度优化: 预计提升3-5倍")
+        print("[OK] 管理员系统: 启用")
+        print("[OK] 速度优化: 预计提升3-5倍")
         print("🛑 按 Ctrl+C 停止机器人")
         print("-" * 50)
         
@@ -467,6 +467,6 @@ class EnhancedBot:
         except KeyboardInterrupt:
             print("\n👋 机器人已停止")
         except Exception as e:
-            print(f"\n❌ 运行错误: {e}")
+            print(f"\n[ERROR] 运行错误: {e}")
 
 
