@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# 环境和配置
+.env
+*.db
+*.db-*
+*.session
+*.session-journal
+
+# 日志和临时文件
+logs/
+*.log
+temp/
+api_results/
+
+# IDE
+.vscode/
+.idea/
